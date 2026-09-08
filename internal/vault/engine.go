@@ -438,6 +438,13 @@ func (a *App) folder(ctx context.Context, c pikpak.Provider, account, nodeID str
 	if n.Kind != "folder" || n.Trashed {
 		return "", block("Target folder is missing or in the recycle bin")
 	}
+	if n.SourceID == "" && n.SourceKey != "" {
+		defer func() {
+			if err == nil {
+				_, _ = a.Store.DB.Exec(`DELETE FROM settings WHERE key=?`, "teldrive_folder:"+account+":"+n.ID)
+			}
+		}()
+	}
 	if cache := operation(ctx); cache != nil {
 		if saved, ok := cache.folders[nodeID]; ok && saved.revision == n.Revision && saved.parent == n.ParentID && saved.id == n.RemoteID {
 			return saved.id, nil

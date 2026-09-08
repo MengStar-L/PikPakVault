@@ -414,6 +414,15 @@ func TestTelDriveRemoteCollisionAndFolderLostResponse(t *testing.T) {
 	if e != nil || f.calls["mkdir"] != before {
 		t.Fatal("duplicate directory", e)
 	}
+	// A process can stop after binding the folder but before clearing the intent.
+	// Resolving that binding must clear the stale intent for future root recovery.
+	a.Store.Set("teldrive_folder:a:"+folder, "stale-intent")
+	if _, e = a.folder(context.Background(), f, "a", folder, map[string]bool{}); e != nil {
+		t.Fatal(e)
+	}
+	if a.Store.Get("teldrive_folder:a:"+folder) != "" {
+		t.Fatal("stale intent retained")
+	}
 	f.files["untracked"] = pikpak.File{ID: "untracked", ParentID: parent, Name: "movie.mp4", Kind: "drive#file", Size: 1, Hash: "different", Phase: "PHASE_TYPE_COMPLETE"}
 	j := tdUploadJob(t, a, "a")
 	a.Execute(context.Background(), &j)
