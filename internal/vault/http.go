@@ -605,8 +605,16 @@ func (a *App) filesList(w http.ResponseWriter, r *http.Request) error {
 		}
 		if !n.Trashed {
 			if operation, ok := operations[n.ID]; ok && operation.Kind != "recover" {
-				n.Transfer = &operation.FileTransfer
-				n.State = "transferring"
+				if operation.Kind == "sync" {
+					// Real folders remain navigable while their remote creation is
+					// queued, so users can inspect transfers within the local tree.
+					if n.State != "present" {
+						n.State = operation.State
+					}
+				} else {
+					n.Transfer = &operation.FileTransfer
+					n.State = "transferring"
+				}
 			}
 		}
 		out = append(out, n)

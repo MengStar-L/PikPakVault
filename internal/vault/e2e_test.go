@@ -112,16 +112,31 @@ func TestServeE2E(t *testing.T) {
 		a.jobMu.Lock()
 		defer a.jobMu.Unlock()
 		id := ID()
+		folderID := ID()
+		if err := a.Store.InsertNode(Node{ID: folderID, ParentID: "root", Name: "TelDrive 同步目录", Kind: "folder"}); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		directoryJob, err := a.Store.NewJob(a.active(), "sync", "同步 TelDrive 文件夹", JobData{MonitorID: "fixture", NodeIDs: []string{folderID}})
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		directoryJob.State = "paused"
+		if err = a.Store.SaveJob(&directoryJob, nil); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
 		source := Source{ID: ID(), Kind: "teldrive", Link: "https://fixture.invalid/files/pending", Manifest: []Entry{{Name: "TelDrive 首次上传.mp4", Path: "TelDrive 首次上传.mp4", Kind: "file", Size: 1500000000}}}
 		if err := a.Store.SaveSource(source); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		if err := a.Store.InsertNode(Node{ID: id, ParentID: "root", Name: "TelDrive 首次上传.mp4", Kind: "file", Mime: "video/mp4", Size: 1500000000, SourceID: source.ID, SourcePath: source.Manifest[0].Path}); err != nil {
+		if err := a.Store.InsertNode(Node{ID: id, ParentID: folderID, Name: "TelDrive 首次上传.mp4", Kind: "file", Mime: "video/mp4", Size: 1500000000, SourceID: source.ID, SourcePath: source.Manifest[0].Path}); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		j, err := a.Store.NewJob(a.active(), "teldrive_upload", "上传 · TelDrive 首次上传.mp4", JobData{MonitorID: "fixture", NodeIDs: []string{id}, SourceID: source.ID, ParentID: "root"})
+		j, err := a.Store.NewJob(a.active(), "teldrive_upload", "上传 · TelDrive 首次上传.mp4", JobData{MonitorID: "fixture", NodeIDs: []string{id}, SourceID: source.ID, ParentID: folderID})
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return

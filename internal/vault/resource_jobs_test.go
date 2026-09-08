@@ -59,6 +59,11 @@ func TestTelDrivePendingNodesDoNotEnterRecovery(t *testing.T) {
 	}
 	j := tdUploadJob(t, a, "a")
 	id := stableNode(m.ID, "movie")
+	for _, folder := range readTransferListing(t, a, "parent=root").Files {
+		if folder.Kind == "folder" && (folder.Transfer != nil || folder.State != "queued") {
+			t.Fatal("pending local folder cannot be browsed", folder)
+		}
+	}
 	// Missing results must be filtered before pagination/counting, not merely
 	// stripped from a response after the SQL limit has already been applied.
 	for i := 0; i < 3; i++ {
