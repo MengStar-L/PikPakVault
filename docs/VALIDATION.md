@@ -2,7 +2,14 @@
 
 验证环境：Windows，Go 1.27.0（CGO_ENABLED=0）、Node.js 24.20.0、Playwright + 本机 Edge。自动化测试使用独立模拟上游；另在用户当前账号验证了专用根目录迁移。记录日期：2026-09-08。
 
-## 已执行的自动化验证
+## v0.2.0 导入与更新验证
+
+- 全量 Go 测试与 vet；完整导入覆盖凭据重新加密、分享提取码、路径、收藏、播放进度、会话失效、任务暂停、错误密钥、重复 ZIP 成员、路径穿越与事务失败回滚。
+- 更新测试覆盖校验和、正式版本比较、安装包成员与架构、正常升级、启动检查失败回滚、更新进程中断后恢复。
+- Playwright 14 个测试通过；新增完整备份导出 → 新实例初始化导入 → 原密码登录，以及桌面、平板和手机更新确认弹窗。
+- [GitHub CI](https://github.com/MengStar-L/PikPakVault/actions/workflows/ci.yml) 执行 Linux race / vet、浏览器回归、双架构打包，以及独立 systemd 更新服务的真实进程故障测试。每次发布要求同一提交的 CI 成功，校验 Release 资产后才公开。
+
+## 首次实现的自动化验证
 
 - `npm ci --prefix web`、`npm run build --prefix web`：TypeScript 检查与前端生产构建。
 - `go test ./... -count=1`：55 个常规测试通过（包含子场景共 81 个通过项）；常规测试跳过需显式启用的浏览器 fixture。`go vet ./...` 通过。
@@ -43,8 +50,8 @@
 
 - **真实资源导入与恢复的双账号流程尚未验证。** 已在当前账号成功执行原顶层专用目录移动到 `My Pack/PikPakVault`，保留根目录 ID，并通过上游查询核对名称和父目录。私有 API 可能变化，仍需要两个可测试账号完成密码/令牌登录、验证挑战、多页带码分享、实际转存 ID、回收站位置、秒传响应及 A → 删除 → A 恢复 → B 重建。
 - 浏览器当前用模拟文本与 WAV 验证播放链路；真实视频编码、清晰度切换、长视频 HLS、画中画/全屏、直连 CORS 和过期地址需用实际资源验证。桌面原生 PDF 查看器也受浏览器支持影响。
-- 本机没有可用 Linux/systemd 或 Docker 运行环境。Linux amd64/arm64 交叉编译与归档校验不能替代 Linux 服务安装、升级故障回退、容器运行验证。
-- 未在本机运行 Go race detector；Linux CI 已配置 `go test -race`、浏览器测试和打包，但没有远程仓库 CI 运行记录，也没有发布或部署。
+- Windows 本机无 systemd 或 Docker；systemd 由 Linux CI 和服务器验收。Docker 运行仍需在容器环境验证。
+- Windows 本机未运行 race detector；race 和 systemd 进程测试由 Linux CI 执行，最新结果参阅上方 Actions。
 - 重启续跑使用数据库关闭重开与持久化状态核对验证，未实施真实机器断电或 Linux 进程强杀验收。
 
 程序备份元数据和恢复来源，不保存文件内容。原始来源失效且云端无可用副本时，保留记录不能保证重新取得内容。

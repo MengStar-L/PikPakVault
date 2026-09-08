@@ -34,6 +34,12 @@ type BackupPreview struct {
 // ExtractBackup only accepts the two original backup members. Never open an
 // uploaded database with Open(), which would run migrations before validation.
 func ExtractBackup(archive, dir string) (*Store, error) {
+	// SQLite file URIs need an absolute path, including when serve uses ./data.
+	abs, e := filepath.Abs(dir)
+	if e != nil {
+		return nil, e
+	}
+	dir = abs
 	z, e := zip.OpenReader(archive)
 	if e != nil {
 		return nil, fmt.Errorf("无法读取 ZIP 备份")

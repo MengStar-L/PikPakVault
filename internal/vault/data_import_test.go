@@ -243,3 +243,24 @@ func TestImportTransactionRollsBackOnBadSchema(t *testing.T) {
 		t.Fatal("failed replacement committed partial data")
 	}
 }
+
+func TestExtractBackupRelativeDataDirectory(t *testing.T) {
+	_, body := backupFixture(t)
+	archive := filepath.Join(t.TempDir(), "backup.zip")
+	if e := os.WriteFile(archive, body, 0600); e != nil {
+		t.Fatal(e)
+	}
+	t.Chdir(t.TempDir())
+	relative := "backup-target"
+	if e := os.Mkdir(relative, 0700); e != nil {
+		t.Fatal(e)
+	}
+	s, e := ExtractBackup(archive, relative)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.DB.Close()
+	if !passwordOK("backup-admin-password", s.Get("password")) {
+		t.Fatal("relative extraction lost database")
+	}
+}
