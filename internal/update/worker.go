@@ -175,16 +175,47 @@ func (w *Worker) save(s *Status, phase, message string) error {
 }
 func (w *Worker) journal(s *Status) string { return filepath.Join(w.Dir, "backup-"+s.Token) }
 func copyFile(src, dst string, mode os.FileMode) error {
+	return CopyFile(src, dst, mode)
+}
+
+// CopyFile streams across filesystems, then publishes within the destination
+// mount. This also works across systemd ReadWritePaths bind mounts.
+func CopyFile(src, dst string, mode os.FileMode) error {
 	f, e := os.Open(src)
 	if e != nil {
 		return e
 	}
 	defer f.Close()
-	b, e := io.ReadAll(io.LimitReader(f, 512<<20))
+	tmp, e := os.CreateTemp(filepath.Dir(dst), ".copy-")
 	if e != nil {
 		return e
 	}
-	return Atomic(dst, b, mode)
+	defer os.Remove(tmp.Name())
+	if e = tmp.Chmod(mode); e == nil {
+		_, e = io.Copy(tmp, f)
+	}
+	if e == nil {
+		e = tmp.Sync()
+	}
+	ce := tmp.Close()
+	if e != nil {
+		return e
+	}
+	if ce != nil {
+		return ce
+	}
+	if e = os.Rename(tmp.Name(), dst); e != nil {
+		return e
+	}
+	if runtime.GOOS == "linux" {
+		dir, e := os.Open(filepath.Dir(dst))
+		if e != nil {
+			return e
+		}
+		defer dir.Close()
+		return dir.Sync()
+	}
+	return nil
 }
 
 func (w *Worker) Run(ctx context.Context) error {

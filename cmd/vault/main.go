@@ -193,13 +193,18 @@ func maintenanceWorker() *update.Worker {
 			return e
 		}
 		for _, name := range []string{"vault.db", "vault.db-wal", "vault.db-shm", "master.key"} {
-			if e = os.Rename(filepath.Join(dir, name), filepath.Join(failed, name)); e != nil && !os.IsNotExist(e) {
+			if e = update.CopyFile(filepath.Join(dir, name), filepath.Join(failed, name), 0600); e != nil && !os.IsNotExist(e) {
+				return e
+			}
+		}
+		for _, name := range []string{"vault.db-wal", "vault.db-shm"} {
+			if e = os.Remove(filepath.Join(dir, name)); e != nil && !os.IsNotExist(e) {
 				return e
 			}
 		}
 		for _, name := range []string{"vault.db", "master.key"} {
 			target := filepath.Join(dir, name)
-			if e = os.Rename(filepath.Join(temp, name), target); e != nil {
+			if e = update.CopyFile(filepath.Join(temp, name), target, 0600); e != nil {
 				return e
 			}
 			if e = exec.Command("chown", "--reference="+dir, "--", target).Run(); e != nil {

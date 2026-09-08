@@ -1363,6 +1363,9 @@ func (s *Store) Backup(filename string) error {
 	if closeErr := z.Close(); e == nil {
 		e = closeErr
 	}
+	if e == nil {
+		e = f.Sync()
+	}
 	if closeErr := f.Close(); e == nil {
 		e = closeErr
 	}
