@@ -136,14 +136,16 @@ func validateBackup(s *Store) error {
 		}
 	}
 	password := s.Get("password")
-	parts := strings.Split(password, ".")
-	if len(parts) != 2 || len(password) > 256 {
-		return fmt.Errorf("备份中没有有效的管理员密码，请先完成原实例初始化")
-	}
-	salt, se := base64.RawStdEncoding.DecodeString(parts[0])
-	hash, he := base64.RawStdEncoding.DecodeString(parts[1])
-	if se != nil || he != nil || len(salt) != 16 || len(hash) != 32 {
-		return fmt.Errorf("备份中的密码哈希无效")
+	if password != "" {
+		parts := strings.Split(password, ".")
+		if len(parts) != 2 || len(password) > 256 {
+			return fmt.Errorf("备份中没有有效的管理员密码，请先完成原实例初始化")
+		}
+		salt, se := base64.RawStdEncoding.DecodeString(parts[0])
+		hash, he := base64.RawStdEncoding.DecodeString(parts[1])
+		if se != nil || he != nil || len(salt) != 16 || len(hash) != 32 {
+			return fmt.Errorf("备份中的密码哈希无效")
+		}
 	}
 	var root int
 	if e = s.DB.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id='root' AND kind='folder' AND parent_id=''`).Scan(&root); e != nil || root != 1 {
@@ -245,6 +247,9 @@ func (a *App) importBackupPreview(w http.ResponseWriter, r *http.Request) error 
 		return fail(400, e.Error())
 	}
 	defer s.DB.Close()
+	if s.Get("password") == "" {
+		return fail(400, "该备份尚未初始化管理员密码，不能通过网页导入")
+	}
 	p := BackupPreview{ID: id, Owner: owner}
 	for table, count := range map[string]*int{"accounts": &p.Accounts, "nodes": &p.Files, "sources": &p.Sources, "jobs": &p.Jobs} {
 		if e = s.DB.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(count); e != nil {
@@ -301,6 +306,9 @@ func (a *App) importBackupCommit(w http.ResponseWriter, r *http.Request) error {
 		return fail(400, e.Error())
 	}
 	defer func() { s.DB.Close(); os.RemoveAll(dir) }()
+	if s.Get("password") == "" {
+		return fail(400, "该备份尚未初始化管理员密码，不能通过网页导入")
+	}
 	backup := filepath.Join(a.Store.Dir, "before-import-"+ID()+".zip")
 	if e = a.Store.Backup(backup); e != nil {
 		return fmt.Errorf("导入前备份失败：%w", e)

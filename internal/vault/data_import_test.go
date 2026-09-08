@@ -264,3 +264,30 @@ func TestExtractBackupRelativeDataDirectory(t *testing.T) {
 		t.Fatal("relative extraction lost database")
 	}
 }
+
+func TestUnconfiguredBackupSupportsRollbackButNotWebImport(t *testing.T) {
+	s, e := Open(t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.DB.Close()
+	archive := filepath.Join(t.TempDir(), "unconfigured.zip")
+	if e = s.Backup(archive); e != nil {
+		t.Fatal(e)
+	}
+	restored, e := ExtractBackup(archive, t.TempDir())
+	if e != nil {
+		t.Fatalf("rollback of a fresh instance failed: %v", e)
+	}
+	restored.DB.Close()
+	body, e := os.ReadFile(archive)
+	if e != nil {
+		t.Fatal(e)
+	}
+	a := NewApp(s)
+	a.SetupToken = "setup-test"
+	w := previewBackup(t, a, body, true)
+	if w.Code != 400 {
+		t.Fatalf("web import should require an administrator: %d", w.Code)
+	}
+}
