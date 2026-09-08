@@ -1,5 +1,44 @@
 import { test, expect } from './fixtures'
 
+test('TelDrive first upload stays in transfers and cannot create duplicate recovery', async ({page})=>{
+  const seeded=await page.request.post('/__fixture/teldrive-pending')
+  expect(seeded.ok()).toBe(true)
+  const {id,job_id}=await seeded.json()
+  await page.goto('/files')
+  const card=page.locator(`[data-job-id="${job_id}"]`)
+  await expect(card).toContainText('TelDrive 首次上传.mp4')
+  await expect(card).toContainText('传输失败')
+  await expect(card.getByRole('button',{name:'重试',exact:true})).toBeVisible()
+  await card.click()
+  await expect(page.getByRole('dialog')).toContainText('读取 TelDrive 文件时连接提前断开')
+  await page.getByRole('dialog').locator('.modal-actions').getByRole('button',{name:'关闭',exact:true}).click()
+  await page.goto('/recovery')
+  await expect(page.getByRole('heading',{name:'恢复中心',exact:true})).toBeVisible()
+  await expect(page.locator('.recovery-item').filter({hasText:'TelDrive 首次上传.mp4'})).toHaveCount(0)
+  await page.getByRole('button',{name:'恢复全部缺失'}).click()
+  await expect(page.getByRole('dialog').getByRole('status')).toContainText('已有传输或恢复任务')
+  await expect(page.getByRole('dialog').locator('.recovery-preview-list')).not.toContainText('TelDrive 首次上传.mp4')
+  for(const width of [1440,768,390]){
+    await page.setViewportSize({width,height:900})
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+    expect(await page.getByRole('dialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true)
+  }
+  await page.getByRole('dialog').getByRole('button',{name:'取消',exact:true}).click()
+  // Only explicit cancellation releases the node to the recovery centre.
+  await page.goto('/tasks')
+  await page.getByRole('button',{name:'取消 上传 · TelDrive 首次上传.mp4',exact:true}).click()
+  await page.getByRole('dialog').getByRole('button',{name:'取消任务',exact:true}).click()
+  await page.goto('/recovery')
+  const row=page.locator('.recovery-item').filter({hasText:'TelDrive 首次上传.mp4'})
+  await expect(row).toHaveCount(1)
+  await row.getByRole('button',{name:'核对恢复'}).click()
+  await expect(page.getByRole('dialog').locator('.recovery-preview-list')).toContainText('TelDrive 首次上传.mp4')
+  await expect(page.getByRole('dialog').getByRole('button',{name:'确认开始恢复'})).toBeEnabled()
+  const missing=await page.request.get(`/api/v1/files?view=missing&search=${encodeURIComponent('TelDrive 首次上传')}`)
+  expect(missing.ok()).toBe(true)
+  expect((await missing.json()).files.map((file:{id:string})=>file.id)).toEqual([id])
+})
+
 test('TelDrive folder selection, manual and automatic sync preserve the page', async ({page})=>{
   let monitors:Record<string,unknown>[]=[]
   let syncs=0

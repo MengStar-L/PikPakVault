@@ -17,8 +17,8 @@ type FileTransfer struct {
 	Message  string `json:"message"`
 }
 
-// Pending items are projections, not nodes: a queued source is not yet a
-// verified file and must never enter recovery, folder pickers, or file actions.
+// Magnet/share pending items are projections, not nodes. TelDrive pre-registers
+// real nodes; resource_jobs excludes those from recovery until their task ends.
 // The caller reads this and the real nodes in one SQLite snapshot so registration
 // cannot produce a duplicate or an empty gap in the same response.
 func fileTransfers(tx *sql.Tx, account, parent string, q url.Values) ([]Node, map[string]*FileTransfer, error) {

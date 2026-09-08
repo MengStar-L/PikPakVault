@@ -994,9 +994,21 @@ func (a *App) recover(ctx context.Context, c pikpak.Provider, j *Job, d *JobData
 	if e != nil {
 		return e
 	}
+	operations, e := nodeJobs(a.Store.DB, j.AccountID)
+	if e != nil {
+		return e
+	}
+	skipped := 0
 	sort.SliceStable(nodes, func(i, k int) bool { return nodes[i].Kind == "folder" && nodes[k].Kind != "folder" })
 	for i, n := range nodes {
 		if n.Trashed || d.Done[n.ID] {
+			continue
+		}
+		// Recheck after folder expansion: old or previously previewed recovery
+		// requests can contain children now owned by a resumable upload.
+		if operation, ok := operations[n.ID]; ok && operation.JobID != j.ID {
+			skipped++
+			delete(d.Problems, n.ID)
 			continue
 		}
 		if e = a.checkpoint(j, d); e != nil {
@@ -1021,6 +1033,9 @@ func (a *App) recover(ctx context.Context, c pikpak.Provider, j *Job, d *JobData
 		if e = a.checkpoint(j, d); e != nil {
 			return e
 		}
+	}
+	if skipped > 0 {
+		d.Note = fmt.Sprintf("已跳过 %d 项已有传输或恢复任务的资源，请在原任务中继续或重试", skipped)
 	}
 	return nil
 }

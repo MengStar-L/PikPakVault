@@ -311,6 +311,10 @@ func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *Jo
 		return e
 	}
 	defer tx.Rollback()
+	operations, e := nodeJobs(tx, j.AccountID)
+	if e != nil {
+		return e
+	}
 	var trashed int
 	var targetKind string
 	if e = tx.QueryRow(`SELECT kind,trashed FROM nodes WHERE id=?`, m.ParentID).Scan(&targetKind, &trashed); e != nil || targetKind != "folder" || trashed != 0 {
@@ -380,13 +384,19 @@ func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *Jo
 			skipped[entry.ID] = true
 			continue
 		}
+		// A pending folder recovery also owns newly discovered descendants.
+		if operation, ok := operations[parent]; ok && operation.Kind == "recover" {
+			if _, reserved := operations[id]; !reserved {
+				operations[id] = operation
+			}
+		}
 		if entry.Type == "folder" {
 			parents[entry.ID] = id
 			var present int
 			if e = tx.QueryRow(`SELECT COUNT(*) FROM bindings WHERE account_id=? AND node_id=? AND state='present'`, j.AccountID, id).Scan(&present); e != nil {
 				return e
 			}
-			if present == 0 {
+			if _, pending := operations[id]; present == 0 && !pending {
 				directories = append(directories, id)
 			}
 			continue
@@ -423,11 +433,7 @@ func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *Jo
 			existing++
 			continue
 		}
-		var pending int
-		if e = tx.QueryRow(`SELECT COUNT(*) FROM jobs WHERE account_id=? AND kind='teldrive_upload' AND json_extract(data,'$.source_id')=? AND state NOT IN ('completed','cancelled')`, j.AccountID, sourceID).Scan(&pending); e != nil {
-			return e
-		}
-		if pending > 0 {
+		if _, pending := operations[id]; pending {
 			existing++
 			continue
 		}
@@ -584,7 +590,7 @@ func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *
 		u.GCID, e = pikpak.GCID(pr, current.Size)
 		reader.Close()
 		if e != nil {
-			return e
+			return fmt.Errorf("读取 TelDrive 文件计算指纹失败（已读取 %d / %d 字节），请在原传输任务中重试：%w", pr.read, current.Size, e)
 		}
 		if n.Hash != "" && !strings.EqualFold(n.Hash, u.GCID) {
 			return block("TelDrive 文件指纹与已保存内容不符")

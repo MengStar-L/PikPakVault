@@ -108,6 +108,31 @@ func TestServeE2E(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {ct}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
 	})}
 	h := http.NewServeMux()
+	h.HandleFunc("POST /__fixture/teldrive-pending", func(w http.ResponseWriter, r *http.Request) {
+		a.jobMu.Lock()
+		defer a.jobMu.Unlock()
+		id := ID()
+		source := Source{ID: ID(), Kind: "teldrive", Link: "https://fixture.invalid/files/pending", Manifest: []Entry{{Name: "TelDrive 首次上传.mp4", Path: "TelDrive 首次上传.mp4", Kind: "file", Size: 1500000000}}}
+		if err := a.Store.SaveSource(source); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		if err := a.Store.InsertNode(Node{ID: id, ParentID: "root", Name: "TelDrive 首次上传.mp4", Kind: "file", Mime: "video/mp4", Size: 1500000000, SourceID: source.ID, SourcePath: source.Manifest[0].Path}); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		j, err := a.Store.NewJob(a.active(), "teldrive_upload", "上传 · TelDrive 首次上传.mp4", JobData{MonitorID: "fixture", NodeIDs: []string{id}, SourceID: source.ID, ParentID: "root"})
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		j.State, j.Progress, j.Message = "failed", 15, "读取 TelDrive 文件时连接提前断开，请重试原任务"
+		if err = a.Store.SaveJob(&j, nil); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"id": id, "job_id": j.ID})
+	})
 	h.HandleFunc("POST /__fixture/transfer/{id}/{state}", func(w http.ResponseWriter, r *http.Request) {
 		a.jobMu.Lock()
 		defer a.jobMu.Unlock()

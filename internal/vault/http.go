@@ -245,7 +245,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	})
 }
 
-var Version = "0.3.0"
+var Version = "0.3.1"
 
 func (a *App) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +347,10 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) error {
 func (a *App) summary(w http.ResponseWriter, r *http.Request) error {
 	var count, folders, bytes, missing, tasks int64
 	_ = a.Store.DB.QueryRow(`SELECT COUNT(*),COALESCE(SUM(CASE WHEN kind='folder' THEN 1 ELSE 0 END),0),COALESCE(SUM(size),0) FROM nodes WHERE id<>'root' AND trashed=0`).Scan(&count, &folders, &bytes)
-	_ = a.Store.DB.QueryRow(`SELECT COUNT(*) FROM nodes n LEFT JOIN bindings b ON b.node_id=n.id AND b.account_id=? WHERE n.id<>'root' AND n.trashed=0 AND (b.state IS NULL OR b.state IN ('missing','drift','conflict'))`, a.active()).Scan(&missing)
+	account := a.active()
+	if err := a.Store.DB.QueryRow(resourceJobsCTE+`SELECT COUNT(*) FROM nodes n LEFT JOIN bindings b ON b.node_id=n.id AND b.account_id=? WHERE n.id<>'root' AND n.trashed=0 AND `+recoveryNeededSQL, account, account).Scan(&missing); err != nil {
+		return err
+	}
 	_ = a.Store.DB.QueryRow(`SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running','waiting','retry')`).Scan(&tasks)
 	writeJSON(w, 200, map[string]any{"count": count, "folders": folders, "bytes": bytes, "missing": missing, "tasks": tasks, "active_account": a.active(), "last_scan": a.Store.Get("last_scan"), "version": Version})
 	return nil
@@ -518,7 +521,7 @@ func (a *App) filesList(w http.ResponseWriter, r *http.Request) error {
 		parent = "root"
 	}
 	where := `n.id<>'root'`
-	args := []any{account}
+	args := []any{account, account}
 	if view == "trash" {
 		where += ` AND n.trashed=1 AND NOT EXISTS(SELECT 1 FROM nodes p WHERE p.id=n.parent_id AND p.trashed=1)`
 	} else {
@@ -535,7 +538,7 @@ func (a *App) filesList(w http.ResponseWriter, r *http.Request) error {
 	case "documents":
 		where += ` AND n.kind='file' AND n.mime NOT LIKE 'video/%' AND n.mime NOT LIKE 'audio/%' AND n.mime NOT LIKE 'image/%'`
 	case "missing":
-		where += ` AND (b.state IS NULL OR b.state IN ('missing','drift','conflict','unknown'))`
+		where += ` AND ` + recoveryNeededSQL
 	case "folders":
 		where += ` AND n.kind='folder'`
 	case "trash":
@@ -575,9 +578,13 @@ func (a *App) filesList(w http.ResponseWriter, r *http.Request) error {
 	if q.Get("transfers") == "0" {
 		pending = nil
 	}
+	operations, e := nodeJobs(tx, account)
+	if e != nil {
+		return e
+	}
 	base := ` FROM nodes n LEFT JOIN bindings b ON b.node_id=n.id AND b.account_id=? WHERE ` + where
 	var total int
-	if e := tx.QueryRow(`SELECT COUNT(*)`+base, args...).Scan(&total); e != nil {
+	if e := tx.QueryRow(resourceJobsCTE+`SELECT COUNT(*)`+base, args...).Scan(&total); e != nil {
 		return e
 	}
 	// Pin unfinished imports ahead of saved files while retaining one consistent
@@ -586,7 +593,7 @@ func (a *App) filesList(w http.ResponseWriter, r *http.Request) error {
 	end := min(page*limit+limit, len(pending))
 	out := append([]Node{}, pending[start:end]...)
 	queryArgs := append(append([]any{}, args...), limit-len(out), max(0, page*limit-len(pending)))
-	rows, e := tx.Query(`SELECT `+nodeCols+base+` ORDER BY `+order+` LIMIT ? OFFSET ?`, queryArgs...)
+	rows, e := tx.Query(resourceJobsCTE+`SELECT `+nodeCols+base+` ORDER BY `+order+` LIMIT ? OFFSET ?`, queryArgs...)
 	if e != nil {
 		return e
 	}
@@ -597,7 +604,10 @@ func (a *App) filesList(w http.ResponseWriter, r *http.Request) error {
 			return e
 		}
 		if !n.Trashed {
-			n.Transfer = transfers[n.SourceID]
+			if operation, ok := operations[n.ID]; ok && operation.Kind != "recover" {
+				n.Transfer = &operation.FileTransfer
+				n.State = "transferring"
+			}
 		}
 		out = append(out, n)
 	}
@@ -1055,6 +1065,21 @@ func (a *App) jobAction(w http.ResponseWriter, r *http.Request) error {
 		if j.AccountID != a.active() && j.Kind != "verify" {
 			return fail(409, "Switch to this task's account first")
 		}
+		if (j.State == "cancelled" || j.State == "completed") && (j.Kind == "teldrive_upload" || j.Kind == "recover" || (j.Kind == "sync" && d.MonitorID != "")) {
+			operations, err := nodeJobs(a.Store.DB, j.AccountID)
+			if err != nil {
+				return err
+			}
+			nodes, err := a.Store.Descendants(d.NodeIDs, j.AccountID)
+			if err != nil {
+				return err
+			}
+			for _, n := range nodes {
+				if operation, ok := operations[n.ID]; ok && operation.JobID != j.ID {
+					return fail(409, "资源已由其他传输或恢复任务接管，请继续该任务，避免重复上传")
+				}
+			}
+		}
 		j.State = "queued"
 		j.Message = ""
 		j.Attempts = 0
@@ -1129,6 +1154,8 @@ func (a *App) recoveryPreview(w http.ResponseWriter, r *http.Request) error {
 	}
 	a.gate.RLock()
 	defer a.gate.RUnlock()
+	a.jobMu.Lock()
+	defer a.jobMu.Unlock()
 	account := a.active()
 	if account == "" {
 		return fail(409, "Connect an account first")
@@ -1141,12 +1168,21 @@ func (a *App) recoveryPreview(w http.ResponseWriter, r *http.Request) error {
 	if e != nil {
 		return e
 	}
+	operations, e := nodeJobs(a.Store.DB, account)
+	if e != nil {
+		return e
+	}
+	skipped := 0
 	var total int64
 	sourceSizes := map[string]int64{}
 	var standaloneBytes int64
 	items := []map[string]any{}
 	for _, n := range nodes {
 		if n.Trashed || n.State == "present" {
+			continue
+		}
+		if _, ok := operations[n.ID]; ok {
+			skipped++
 			continue
 		}
 		method := "source"
@@ -1182,7 +1218,7 @@ func (a *App) recoveryPreview(w http.ResponseWriter, r *http.Request) error {
 		}
 		transferBytes += max(selectedSize, batchSize)
 	}
-	writeJSON(w, 200, map[string]any{"account": ac, "items": items, "bytes": total, "transfer_bytes": transferBytes, "available": max(int64(0), ac.Limit-ac.Used), "capacity_warning": ac.Limit > 0 && transferBytes > ac.Limit-ac.Used})
+	writeJSON(w, 200, map[string]any{"account": ac, "items": items, "skipped_pending": skipped, "bytes": total, "transfer_bytes": transferBytes, "available": max(int64(0), ac.Limit-ac.Used), "capacity_warning": ac.Limit > 0 && transferBytes > ac.Limit-ac.Used})
 	return nil
 }
 func (a *App) recoveryCreate(w http.ResponseWriter, r *http.Request) error {
@@ -1195,6 +1231,9 @@ func (a *App) recoveryCreate(w http.ResponseWriter, r *http.Request) error {
 	}
 	a.gate.RLock()
 	defer a.gate.RUnlock()
+	// Serialize reservation checks with TelDrive registration and task controls.
+	a.jobMu.Lock()
+	defer a.jobMu.Unlock()
 	account := a.active()
 	if account == "" {
 		return fail(409, "Connect an account first")
@@ -1207,12 +1246,24 @@ func (a *App) recoveryCreate(w http.ResponseWriter, r *http.Request) error {
 		return e
 	}
 	ids := []string{}
+	operations, e := nodeJobs(a.Store.DB, account)
+	if e != nil {
+		return e
+	}
+	skipped := 0
 	for _, n := range nodes {
 		if !n.Trashed && n.State != "present" {
+			if _, ok := operations[n.ID]; ok {
+				skipped++
+				continue
+			}
 			ids = append(ids, n.ID)
 		}
 	}
 	if len(ids) == 0 {
+		if skipped > 0 {
+			return fail(409, "所选资源已有传输或恢复任务，请在传输任务中继续或重试原任务；取消后才能另行恢复")
+		}
 		return fail(409, "No selected items need recovery")
 	}
 	j, e := a.Store.NewJob(account, "recover", "Restore library · "+strconv.Itoa(len(ids))+" items", JobData{NodeIDs: ids})
