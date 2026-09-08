@@ -23,6 +23,7 @@ type tdFixture struct {
 	files                      map[string]teldrive.File
 	body                       string
 	unavailable, broken, short bool
+	onDownload                 func()
 }
 
 func telDriveFixture(t *testing.T) *tdFixture {
@@ -62,6 +63,10 @@ func telDriveFixture(t *testing.T) *tdFixture {
 		}
 		if r.URL.Path == "/api/files/movie/movie.mp4" {
 			f.downloads.Add(1)
+			if f.onDownload != nil {
+				f.onDownload()
+				f.onDownload = nil
+			}
 			var start, end int64
 			fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end)
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(f.body)))
@@ -166,6 +171,7 @@ type uploadFake struct {
 	begins, sends                    int
 	lostTicket, lostContent, instant bool
 	beforeContent                    func()
+	afterBegin                       func()
 	data                             string
 }
 
@@ -182,6 +188,10 @@ func (f *uploadFake) BeginUpload(_ context.Context, parent string, file pikpak.F
 	u := pikpak.UploadTicket{File: &file, Resumable: &struct {
 		Params pikpak.UploadParams `json:"params"`
 	}{pikpak.UploadParams{AccessKeyID: "private-ticket"}}}
+	if f.afterBegin != nil {
+		f.afterBegin()
+		f.afterBegin = nil
+	}
 	if f.lostTicket {
 		return pikpak.UploadTicket{}, &pikpak.APIError{Code: "response_lost"}
 	}

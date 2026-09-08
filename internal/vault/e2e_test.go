@@ -108,6 +108,42 @@ func TestServeE2E(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {ct}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
 	})}
 	h := http.NewServeMux()
+	td := telDriveFixture(t)
+	h.HandleFunc("POST /__fixture/teldrive-saved", func(w http.ResponseWriter, r *http.Request) {
+		a.jobMu.Lock()
+		defer a.jobMu.Unlock()
+		mu.Lock()
+		defer mu.Unlock()
+		monitor, landing, target := ID(), ID(), ID()
+		id, sourceID := stableNode(monitor, "movie"), stableNode("teldrive-source:"+monitor, "movie")
+		add(landing, "root", "TelDrive 原同步目录", "folder", "", 0, false)
+		add(target, "root", "TelDrive 整理目录", "folder", "", 0, false)
+		add(id, landing, "TelDrive 路径样本.mp4", "file", "video/mp4", int64(len(td.body)), false)
+		secret, _ := a.Store.Seal(telDriveSource{monitor, td.files["movie"]})
+		a.Store.SaveSource(Source{ID: sourceID, Kind: "teldrive", Link: td.server.URL + "/files/movie", Secret: secret})
+		a.Store.DB.Exec(`UPDATE nodes SET source_id=?,source_key='movie',source_path='nested/movie.mp4' WHERE id=?`, sourceID, id)
+		auth, _ := a.Store.Seal(telDriveAuth{"td-private-token"})
+		_, err := a.Store.DB.Exec(`INSERT INTO teldrive_monitors(`+monitorCols+`) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+			monitor, "路径追踪验收", td.server.URL, "folder", "/collection", landing, auth, 0, 0, now())
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"id": id, "monitor_id": monitor, "parent_id": landing, "target_id": target})
+	})
+	h.HandleFunc("POST /__fixture/remote-trash/{id}", func(w http.ResponseWriter, r *http.Request) {
+		n, err := a.Store.Node(r.PathValue("id"), a.active())
+		if err != nil {
+			http.Error(w, "not found", 404)
+			return
+		}
+		mu.Lock()
+		file := f.files[n.RemoteID]
+		file.Trashed = true
+		f.files[n.RemoteID] = file
+		mu.Unlock()
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	})
 	h.HandleFunc("POST /__fixture/teldrive-pending", func(w http.ResponseWriter, r *http.Request) {
 		a.jobMu.Lock()
 		defer a.jobMu.Unlock()

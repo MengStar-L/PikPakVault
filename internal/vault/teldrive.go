@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-
 	"strings"
 	"time"
 
@@ -282,7 +281,7 @@ func sameTelDriveFile(a, b teldrive.File) bool {
 	}
 	return a.Updated != "" && a.Updated == b.Updated
 }
-func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *JobData) error {
+func (a *App) scanTelDrive(ctx context.Context, remote pikpak.Provider, j *Job, d *JobData) error {
 	m, e := a.Store.monitor(d.MonitorID)
 	if e != nil {
 		return e
@@ -290,6 +289,27 @@ func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *Jo
 	c, e := a.telDriveClient(m)
 	if e != nil {
 		return e
+	}
+	d.Problems = map[string]string{}
+	recovered := 0
+	ac, e := a.Store.Account(j.AccountID)
+	if e != nil {
+		return e
+	}
+	if ac.RootID != "" {
+		j.Message = "正在核对已登记资源的 PikPak 副本"
+		if e = a.checkpoint(j, d); e != nil {
+			return e
+		}
+		if e = a.checkLibrary(ctx, remote, j); e != nil {
+			return e
+		}
+		// Existing sources remain repairable even if their old local folder or
+		// the TelDrive listing no longer contains them.
+		recovered, e = a.enqueueTelDriveMissing(ctx, j, m.ID)
+		if e != nil {
+			return e
+		}
 	}
 	j.Message = "正在完整读取 TelDrive 目录"
 	if e = a.checkpoint(j, d); e != nil {
@@ -299,7 +319,7 @@ func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *Jo
 	if e != nil {
 		return e
 	}
-	// No writes or child tasks until all pages and nested directories are read.
+	// Discover new resources only after all source pages and directories are read.
 	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
 	current, e := a.Store.Job(j.ID)
@@ -318,61 +338,60 @@ func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *Jo
 	if e != nil {
 		return e
 	}
-	var trashed int
-	var targetKind string
-	if e = tx.QueryRow(`SELECT kind,trashed FROM nodes WHERE id=?`, m.ParentID).Scan(&targetKind, &trashed); e != nil || targetKind != "folder" || trashed != 0 {
-		return block("同步目标文件夹已删除，请还原后重试")
+	moving, e := pathJobs(tx, j.AccountID)
+	if e != nil {
+		return e
 	}
-	parents := map[string]string{m.FolderID: m.ParentID}
-	skipped := map[string]bool{}
+	parents := map[string]string{}
+	active, e := localNodeActive(tx, m.ParentID)
+	if e != nil {
+		return e
+	}
+	if active {
+		parents[m.FolderID] = m.ParentID
+	} else {
+		d.Problems["target"] = "原同步目标已删除，暂停新资源登记；已移出资源仍按当前位置检查和恢复"
+	}
 	queued, existing := 0, 0
 	directories := []string{}
 	for _, entry := range entries {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if e = ValidName(entry.Name); e != nil {
-			d.Problems[entry.Path] = e.Error()
-			skipped[entry.ID] = true
-			continue
-		}
-		if skipped[entry.ParentID] {
-			skipped[entry.ID] = true
-			continue
-		}
-		parent, ok := parents[entry.ParentID]
-		if !ok {
-			return block("来源父目录映射不完整")
-		}
+		parent, mapped := parents[entry.ParentID]
 		id := stableNode(m.ID, entry.ID)
 		sourceID := stableNode("teldrive-source:"+m.ID, entry.ID)
-		var foundID, kind string
+		var foundID, kind, name string
 		var deleted int
-		err := tx.QueryRow(`SELECT id,kind,trashed,parent_id FROM nodes WHERE id=?`, id).Scan(&foundID, &kind, &deleted, &parent)
+		err := tx.QueryRow(`SELECT id,kind,trashed,parent_id,name FROM nodes WHERE id=?`, id).Scan(&foundID, &kind, &deleted, &parent, &name)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if deleted != 0 {
-			skipped[entry.ID] = true
 			continue
 		}
-		// Also honor a user trashing an ancestor after moving the local entry.
-		var deletedAncestors int
-		if e = tx.QueryRow(`WITH RECURSIVE ancestors(id,parent_id,trashed) AS (SELECT id,parent_id,trashed FROM nodes WHERE id=? UNION SELECT n.id,n.parent_id,n.trashed FROM nodes n JOIN ancestors p ON n.id=p.parent_id) SELECT COALESCE(SUM(trashed),0) FROM ancestors`, parent).Scan(&deletedAncestors); e != nil {
+		if foundID == "" && !mapped {
+			continue
+		}
+		active, e := localNodeActive(tx, parent)
+		if e != nil {
 			return e
 		}
-		if deletedAncestors > 0 {
-			skipped[entry.ID] = true
+		if !active {
 			continue
 		}
 		if foundID == "" {
+			if e = ValidName(entry.Name); e != nil {
+				d.Problems[entry.Path] = e.Error()
+				continue
+			}
+			name = entry.Name
 			var conflict int
 			if e = tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE parent_id=? AND name=? AND trashed=0`, parent, entry.Name).Scan(&conflict); e != nil {
 				return e
 			}
 			if conflict > 0 {
 				d.Problems[entry.Path] = "本地已有同名项目，请更换目标或整理重名后重试"
-				skipped[entry.ID] = true
 				continue
 			}
 			nodeSource := sourceID
@@ -384,22 +403,24 @@ func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *Jo
 			}
 		} else if kind != entry.Type {
 			d.Problems[entry.Path] = "来源项目类型发生变化"
-			skipped[entry.ID] = true
 			continue
 		}
 		// A pending folder recovery also owns newly discovered descendants.
-		if operation, ok := operations[parent]; ok && operation.Kind == "recover" {
+		if operation, ok := operations[parent]; ok && operation.Kind == "recover" && !operation.Exact {
 			if _, reserved := operations[id]; !reserved {
 				operations[id] = operation
 			}
 		}
+		if moving[parent] {
+			moving[id] = true
+		}
 		if entry.Type == "folder" {
 			parents[entry.ID] = id
-			var present int
-			if e = tx.QueryRow(`SELECT COUNT(*) FROM bindings WHERE account_id=? AND node_id=? AND state='present'`, j.AccountID, id).Scan(&present); e != nil {
+			var bound int
+			if e = tx.QueryRow(`SELECT COUNT(*) FROM bindings WHERE account_id=? AND node_id=? AND remote_id<>''`, j.AccountID, id).Scan(&bound); e != nil {
 				return e
 			}
-			if _, pending := operations[id]; present == 0 && !pending {
+			if _, pending := operations[id]; bound == 0 && !pending && !moving[id] {
 				directories = append(directories, id)
 			}
 			continue
@@ -427,20 +448,20 @@ func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *Jo
 		} else {
 			return err
 		}
-		var remoteID, state string
-		err = tx.QueryRow(`SELECT remote_id,state FROM bindings WHERE account_id=? AND node_id=?`, j.AccountID, id).Scan(&remoteID, &state)
+		var remoteID string
+		err = tx.QueryRow(`SELECT remote_id FROM bindings WHERE account_id=? AND node_id=?`, j.AccountID, id).Scan(&remoteID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if remoteID != "" && state == "present" {
+		if remoteID != "" {
 			existing++
 			continue
 		}
-		if _, pending := operations[id]; pending {
+		if _, pending := operations[id]; pending || moving[id] {
 			existing++
 			continue
 		}
-		if _, e = tx.Exec(`INSERT INTO jobs(id,account_id,kind,title,state,data,created,updated) VALUES(?,?,'teldrive_upload',?,'queued',?,?,?)`, ID(), j.AccountID, "上传 · "+entry.Name, jsonText(JobData{MonitorID: m.ID, SourceID: sourceID, ParentID: parent, NodeIDs: []string{id}}), now(), now()); e != nil {
+		if _, e = tx.Exec(`INSERT INTO jobs(id,account_id,kind,title,state,data,created,updated) VALUES(?,?,'teldrive_upload',?,'queued',?,?,?)`, ID(), j.AccountID, "上传 · "+name, jsonText(JobData{MonitorID: m.ID, SourceID: sourceID, ParentID: parent, NodeIDs: []string{id}}), now(), now()); e != nil {
 			return e
 		}
 		queued++
@@ -453,7 +474,7 @@ func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *Jo
 			return e
 		}
 		if unfinished == 0 {
-			if _, e = tx.Exec(`INSERT INTO jobs(id,account_id,kind,title,state,data,created,updated) VALUES(?,?,'sync',?,'queued',?,?,?)`, ID(), j.AccountID, "同步 TelDrive 文件夹 · "+m.Name, jsonText(JobData{MonitorID: m.ID, NodeIDs: directories}), now(), now()); e != nil {
+			if _, e = tx.Exec(`INSERT INTO jobs(id,account_id,kind,title,state,data,created,updated) VALUES(?,?,'sync',?,'queued',?,?,?)`, ID(), j.AccountID, "同步 TelDrive 文件夹 · "+m.Name, jsonText(JobData{MonitorID: m.ID, ExactNodes: true, NodeIDs: directories}), now(), now()); e != nil {
 				return e
 			}
 		}
@@ -461,7 +482,7 @@ func (a *App) scanTelDrive(ctx context.Context, _ pikpak.Provider, j *Job, d *Jo
 	if e = tx.Commit(); e != nil {
 		return e
 	}
-	d.Note = fmt.Sprintf("已扫描 %d 项，新增 %d 个上传任务，跳过 %d 个已保存或已有任务的文件", len(entries), queued, existing)
+	d.Note = fmt.Sprintf("已扫描 %d 项，新增上传 %d 项，缺失恢复 %d 项，已保存或已有任务跳过 %d 项，待处理 %d 项", len(entries), queued, recovered, existing, len(d.Problems))
 	return nil
 }
 
@@ -537,10 +558,7 @@ func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *
 		u = &TelDriveUpload{}
 		d.Uploads[n.ID] = u
 	}
-	parent, e := a.folder(ctx, c, j.AccountID, n.ParentID, map[string]bool{})
-	if e != nil {
-		return e
-	}
+	var parent string
 	// A saved result is authoritative even if the upload response was lost or
 	// TelDrive later became unavailable. Verify it before touching the source.
 	remoteID := u.RemoteID
@@ -553,7 +571,7 @@ func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *
 			if u.GCID != "" {
 				n.Hash = u.GCID
 			}
-			return a.finishTelDrive(ctx, c, j, d, n, f, parent)
+			return a.finishTelDrive(ctx, c, j, d, n, f)
 		}
 		if err != nil && !pikpak.Missing(err) {
 			return err
@@ -645,7 +663,7 @@ func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *
 				return e
 			}
 			if matches[0].Complete() {
-				return a.finishTelDrive(ctx, c, j, d, n, matches[0], parent)
+				return a.finishTelDrive(ctx, c, j, d, n, matches[0])
 			}
 		}
 		if len(matches) > 1 {
@@ -660,7 +678,8 @@ func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *
 		}
 	}
 	if u.RemoteID == "" {
-		if e := a.telDriveNodeActive(n.ID); e != nil {
+		n, parent, e = a.telDriveTarget(ctx, c, j.AccountID, n)
+		if e != nil {
 			return e
 		}
 		files, e := listAll(ctx, c, parent)
@@ -704,7 +723,7 @@ func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *
 			return block("PikPak 上传结果的名称、位置或内容不符，请核对远端结果")
 		}
 		if f.Complete() {
-			return a.finishTelDrive(ctx, c, j, d, n, f, parent)
+			return a.finishTelDrive(ctx, c, j, d, n, f)
 		}
 	}
 	if u.Secret == "" {
@@ -764,14 +783,18 @@ func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *
 		}
 		return wait("文件内容已发送，正在核对 PikPak 保存结果")
 	}
-	return a.finishTelDrive(ctx, c, j, d, n, f, parent)
+	return a.finishTelDrive(ctx, c, j, d, n, f)
 }
-func (a *App) finishTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *JobData, n Node, f pikpak.File, parent string) error {
+func (a *App) finishTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *JobData, n Node, f pikpak.File) error {
 	if e := a.telDriveNodeActive(n.ID); e != nil {
 		return e
 	}
 	if !f.Complete() || f.Trashed || !compatible(n, f) || f.Hash == "" || !strings.EqualFold(f.Hash, n.Hash) {
 		return block("上传后文件大小或指纹核对失败")
+	}
+	n, parent, e := a.telDriveTarget(ctx, c, j.AccountID, n)
+	if e != nil {
+		return e
 	}
 	if e := a.align(ctx, c, j.AccountID, n, f, parent); e != nil {
 		return e
@@ -792,18 +815,21 @@ func (a *App) finishTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *
 	if u := d.Uploads[n.ID]; u != nil {
 		u.Secret = ""
 	}
-	d.Note = "TelDrive 文件已上传，大小与指纹核对通过"
+	path, e := a.Store.Path(n.ID)
+	if e != nil {
+		return e
+	}
+	d.Note = "TelDrive 文件已保存至 " + path + "，大小与指纹核对通过"
 	return nil
 }
 
 func (a *App) telDriveNodeActive(id string) error {
-	var deleted int
-	e := a.Store.DB.QueryRow(`WITH RECURSIVE ancestors(id,parent_id,trashed) AS (SELECT id,parent_id,trashed FROM nodes WHERE id=? UNION SELECT n.id,n.parent_id,n.trashed FROM nodes n JOIN ancestors p ON n.id=p.parent_id) SELECT COALESCE(SUM(trashed),0) FROM ancestors`, id).Scan(&deleted)
+	active, e := localNodeActive(a.Store.DB, id)
 	if e != nil {
 		return e
 	}
-	if deleted > 0 {
-		return block("本地文件或父目录已进入回收站，上传已暂停")
+	if !active {
+		return block("本地文件或父目录已删除或进入回收站，上传已暂停")
 	}
 	return nil
 }

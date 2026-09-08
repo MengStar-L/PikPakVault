@@ -247,7 +247,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	})
 }
 
-var Version = "0.3.2"
+var Version = "0.3.3"
 
 func (a *App) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1,5 +1,56 @@
 import { test, expect } from './fixtures'
 
+test('moved TelDrive file stays unique and manual sync repairs its latest path',async({page})=>{
+  const response=await page.request.post('/__fixture/teldrive-saved')
+  expect(response.ok()).toBe(true)
+  const {id,monitor_id,target_id}=await response.json()
+  const uploads=async()=>((await (await page.request.get('/api/v1/jobs')).json()).jobs as {kind:string}[]).filter(j=>j.kind==='teldrive_upload').length
+  const before=await uploads()
+  const file=async()=>((await (await page.request.get(`/api/v1/files/${id}`)).json()).file)
+  const original=await file()
+  await page.goto('/files')
+  await page.getByRole('textbox',{name:'搜索文件'}).fill('TelDrive 路径样本')
+  await page.getByRole('button',{name:'TelDrive 路径样本.mp4 的更多操作'}).click()
+  await page.getByRole('menuitem',{name:'重命名',exact:true}).click()
+  await page.getByLabel('名称',{exact:true}).fill('TelDrive 已整理.mp4')
+  await page.getByRole('button',{name:'保存名称'}).click()
+  await page.getByRole('textbox',{name:'搜索文件'}).fill('TelDrive 已整理')
+  await page.getByRole('button',{name:'TelDrive 已整理.mp4 的更多操作'}).click()
+  await page.getByRole('menuitem',{name:'移动到…',exact:true}).click()
+  await page.locator('.picker-list').getByRole('button',{name:'TelDrive 整理目录',exact:true}).click()
+  await page.getByRole('button',{name:'选择当前文件夹'}).click()
+  await page.getByRole('button',{name:'移动到这里'}).click()
+  await expect.poll(async()=>{const n=await file();return `${n.parent_id}:${n.state}`}).toBe(`${target_id}:present`)
+  const {csrf}=await (await page.request.get('/api/v1/auth/status')).json()
+  const sync=async()=>{
+    const r=await page.request.post(`/api/v1/teldrive/${monitor_id}/sync`,{data:{},headers:{'X-CSRF-Token':csrf}})
+    expect(r.ok()).toBe(true)
+    const j=await r.json()
+    await expect.poll(async()=>((await (await page.request.get(`/api/v1/jobs/${j.id}`)).json()).job.state),{timeout:20000}).toBe('completed')
+  }
+  await sync()
+  expect(await uploads()).toBe(before)
+  await page.request.post(`/__fixture/remote-trash/${id}`)
+  await page.goto('/recovery')
+  await page.getByRole('button',{name:'检查远端',exact:true}).click()
+  await expect(page.locator('.recovery-item').filter({hasText:'TelDrive 已整理.mp4'})).toBeVisible()
+  await sync()
+  await expect.poll(async()=>(await file()).state,{timeout:20000}).toBe('present')
+  const restored=await file()
+  expect(restored.parent_id).toBe(target_id)
+  expect(restored.name).toBe('TelDrive 已整理.mp4')
+  expect(restored.remote_id).toBe(original.remote_id)
+  expect(await uploads()).toBe(before)
+  await page.goto(`/files?folder=${target_id}`)
+  await expect(page.locator('.file-card').filter({hasText:'TelDrive 已整理.mp4'})).toHaveCount(1)
+  for(const width of [1440,768,390]){
+    await page.setViewportSize({width,height:900})
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+    await expect(page.locator('.file-card').first()).toHaveCSS('opacity','1')
+    await page.screenshot({path:`../artifacts/teldrive-restored-${width}.png`,animations:'disabled'})
+  }
+})
+
 test('managed aria2 cache shows automatic setup and confirms cleanup',async({page})=>{
   let current={bytes:1500000000,files:1,reclaimable:1500000000,aria2_available:false}
   let clear=0

@@ -148,6 +148,7 @@ type TransferState struct {
 }
 type JobData struct {
 	MonitorID      string                     `json:"monitor_id,omitempty"`
+	ExactNodes     bool                       `json:"exact_nodes,omitempty"` // Automatic repair must not expand into healthy descendants.
 	Uploads        map[string]*TelDriveUpload `json:"uploads,omitempty"`
 	Preview        []Entry                    `json:"preview,omitempty"` // Untrusted display hints from the share picker.
 	InstantStates  map[string]*InstantState   `json:"instant_states,omitempty"`
@@ -492,15 +493,31 @@ func (a *App) folder(ctx context.Context, c pikpak.Provider, account, nodeID str
 	}
 	directKey := "teldrive_folder:" + account + ":" + n.ID
 	directRequest := jsonText(map[string]string{"parent": parent, "name": n.Name})
-	if n.SourceID == "" && n.SourceKey != "" && a.Store.Get(directKey) == directRequest {
+	if saved := a.Store.Get(directKey); n.SourceID == "" && n.SourceKey != "" && saved != "" {
+		var original struct{ Parent, Name string }
+		if e = json.Unmarshal([]byte(saved), &original); e != nil || original.Parent == "" || original.Name == "" {
+			return "", block("TelDrive 文件夹创建记录无效，请核对远端结果")
+		}
+		results := files
+		if original.Parent != parent {
+			results, e = listAll(ctx, c, original.Parent)
+			if e != nil {
+				return "", e
+			}
+		}
 		matches := []pikpak.File{}
-		for _, f := range files {
-			if f.Name == n.Name {
+		for _, f := range results {
+			if f.Name == original.Name {
 				matches = append(matches, f)
 			}
 		}
 		if len(matches) == 1 && matches[0].Folder() {
 			f := matches[0]
+			// Bind the attributable result before aligning, so another path change
+			// or a lost move response can resume using its ID.
+			if e = a.Store.Bind(account, n.ID, f.ID, "pending", f.Name, f.ParentID, ""); e != nil {
+				return "", e
+			}
 			if e = a.align(ctx, c, account, n, f, parent); e != nil {
 				return "", e
 			}
@@ -619,9 +636,23 @@ func (a *App) align(ctx context.Context, c pikpak.Provider, account string, n No
 	if latest.Trashed || latest.Revision != n.Revision {
 		state = "drift"
 	}
-	return a.Store.Bind(account, n.ID, check.ID, state, check.Name, check.ParentID, check.Thumbnail)
+	if e = a.Store.Bind(account, n.ID, check.ID, state, check.Name, check.ParentID, check.Thumbnail); e != nil {
+		return e
+	}
+	if state == "drift" {
+		return wait("Local file changed during the operation; reconciling its latest path")
+	}
+	return nil
 }
 func (a *App) scan(ctx context.Context, c pikpak.Provider, j *Job) error {
+	if e := a.checkLibrary(ctx, c, j); e != nil {
+		return e
+	}
+	_, e := a.enqueueTelDriveMissing(ctx, j, "")
+	return e
+}
+
+func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error {
 	ac, e := a.Store.Account(j.AccountID)
 	if e != nil {
 		return e
@@ -725,8 +756,13 @@ func (a *App) scan(ctx context.Context, c pikpak.Provider, j *Job) error {
 		return e
 	}
 	defer tx.Rollback()
-	for id, state := range states {
-		if _, e = tx.Exec(`UPDATE bindings SET state=?,checked=? WHERE account_id=? AND node_id=?`, state, now(), j.AccountID, id); e != nil {
+	for _, n := range nodes {
+		state, ok := states[n.ID]
+		if !ok {
+			continue
+		}
+		if _, e = tx.Exec(`UPDATE bindings SET state=?,checked=? WHERE account_id=? AND node_id=? AND remote_id=?
+			AND EXISTS (SELECT 1 FROM nodes WHERE id=? AND revision=?)`, state, now(), j.AccountID, n.ID, n.RemoteID, n.ID, n.Revision); e != nil {
 			return e
 		}
 	}
@@ -989,8 +1025,26 @@ func (a *App) importSource(ctx context.Context, c pikpak.Provider, j *Job, d *Jo
 	}
 	return nil
 }
+func (a *App) jobNodes(j *Job, d *JobData) ([]Node, error) {
+	if !d.ExactNodes {
+		return a.Store.Descendants(d.NodeIDs, j.AccountID)
+	}
+	nodes := make([]Node, 0, len(d.NodeIDs))
+	for _, id := range d.NodeIDs {
+		n, e := a.Store.Node(id, j.AccountID)
+		if errors.Is(e, sql.ErrNoRows) {
+			continue
+		}
+		if e != nil {
+			return nil, e
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, nil
+}
+
 func (a *App) recover(ctx context.Context, c pikpak.Provider, j *Job, d *JobData) error {
-	nodes, e := a.Store.Descendants(d.NodeIDs, j.AccountID)
+	nodes, e := a.jobNodes(j, d)
 	if e != nil {
 		return e
 	}
@@ -1002,6 +1056,13 @@ func (a *App) recover(ctx context.Context, c pikpak.Provider, j *Job, d *JobData
 	sort.SliceStable(nodes, func(i, k int) bool { return nodes[i].Kind == "folder" && nodes[k].Kind != "folder" })
 	for i, n := range nodes {
 		if n.Trashed || d.Done[n.ID] {
+			continue
+		}
+		active, e := localNodeActive(a.Store.DB, n.ID)
+		if e != nil {
+			return e
+		}
+		if !active {
 			continue
 		}
 		// Recheck after folder expansion: old or previously previewed recovery
@@ -1188,7 +1249,7 @@ func (a *App) restoreNode(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 	return a.align(ctx, c, j.AccountID, n, f, parent)
 }
 func (a *App) syncNodes(ctx context.Context, c pikpak.Provider, j *Job, d *JobData) error {
-	nodes, e := a.Store.Descendants(d.NodeIDs, j.AccountID)
+	nodes, e := a.jobNodes(j, d)
 	if e != nil {
 		return e
 	}

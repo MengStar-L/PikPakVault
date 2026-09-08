@@ -43,7 +43,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 从 [Releases](https://github.com/MengStar-L/PikPakVault/releases/latest) 下载对应架构安装包与 `SHA256SUMS`，也可以执行：
 
 ```bash
-version=0.3.2
+version=0.3.3
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -89,6 +89,8 @@ curl -fsS http://127.0.0.1:5675/healthz
 
 配置、流量消耗与恢复规则见 [TelDrive 使用说明](docs/TELDRIVE.md)。
 
+同步后可以自由移动、重命名文件，重复扫描不会再上传同一资源。PikPak 副本缺失时，从保存的 TelDrive 来源恢复到资源库中的最新路径；是否自动补回跟随监控的同步模式。
+
 ## 程序更新
 
 进入 **设置 → 程序更新 → 检查更新**。发现新版本后查看发布说明，点击「安装更新」，再确认安装与重启。**检查更新不会自动安装。**
@@ -103,7 +105,7 @@ curl -fsS http://127.0.0.1:5675/healthz
 sudo journalctl -u pikpak-vault-update -n 60 --no-pager
 sudo cat /var/lib/pikpak-vault-updater/status.json
 # 将版本号替换为实际新版本
-sudo bash deploy/update.sh v0.3.2
+sudo bash deploy/update.sh v0.3.3
 ```
 
 更新源默认是本仓库的公开 Releases，可在 root 管理的环境配置中设置 `VAULT_UPDATE_REPOSITORY=owner/repository`。Windows 和 Docker 支持检查与下载链接；网页自动安装仅用于上述 systemd 安装方式。Docker 更新请重新构建镜像并保留数据卷。
@@ -151,7 +153,7 @@ go test ./...
 go run ./cmd/vault serve --data ./data --listen 127.0.0.1:5675
 
 # Linux 双架构发布包
-bash scripts/build.sh 0.3.2
+bash scripts/build.sh 0.3.3
 ```
 
 前端 React 19 + TypeScript + Vite + Tailwind / Radix / Motion，后端 Go `net/http` + SQLite。前端产物嵌入可执行文件。开发热更新使用 `npm run dev --prefix web`。Docker 可执行 `docker compose up -d --build`。
