@@ -26,6 +26,7 @@ type App struct {
 	SecureCookies bool
 	Factory       func(Account) (pikpak.Provider, error)
 	MediaHTTP     *http.Client
+	TelDriveHTTP  *http.Client
 	gate          sync.RWMutex
 	dataMu        sync.RWMutex // Import replaces the logical database as one transaction.
 	jobMu         sync.Mutex
@@ -146,20 +147,22 @@ type TransferState struct {
 	Started         int64         `json:"started"`
 }
 type JobData struct {
-	Preview        []Entry                   `json:"preview,omitempty"` // Untrusted display hints from the share picker.
-	InstantStates  map[string]*InstantState  `json:"instant_states,omitempty"`
-	CleanupJobs    []string                  `json:"cleanup_jobs,omitempty"`
-	CleanupResults map[string]string         `json:"cleanup_results,omitempty"`
-	Note           string                    `json:"note,omitempty"`
-	RootPath       string                    `json:"root_path,omitempty"`
-	SourceID       string                    `json:"source_id,omitempty"`
-	ParentID       string                    `json:"parent_id,omitempty"`
-	NodeIDs        []string                  `json:"node_ids,omitempty"`
-	Transfers      map[string]*TransferState `json:"transfers,omitempty"`
-	Done           map[string]bool           `json:"done,omitempty"`
-	Problems       map[string]string         `json:"problems,omitempty"`
-	Instant        map[string]string         `json:"instant,omitempty"`
-	InstantTried   map[string]bool           `json:"instant_tried,omitempty"`
+	MonitorID      string                     `json:"monitor_id,omitempty"`
+	Uploads        map[string]*TelDriveUpload `json:"uploads,omitempty"`
+	Preview        []Entry                    `json:"preview,omitempty"` // Untrusted display hints from the share picker.
+	InstantStates  map[string]*InstantState   `json:"instant_states,omitempty"`
+	CleanupJobs    []string                   `json:"cleanup_jobs,omitempty"`
+	CleanupResults map[string]string          `json:"cleanup_results,omitempty"`
+	Note           string                     `json:"note,omitempty"`
+	RootPath       string                     `json:"root_path,omitempty"`
+	SourceID       string                     `json:"source_id,omitempty"`
+	ParentID       string                     `json:"parent_id,omitempty"`
+	NodeIDs        []string                   `json:"node_ids,omitempty"`
+	Transfers      map[string]*TransferState  `json:"transfers,omitempty"`
+	Done           map[string]bool            `json:"done,omitempty"`
+	Problems       map[string]string          `json:"problems,omitempty"`
+	Instant        map[string]string          `json:"instant,omitempty"`
+	InstantTried   map[string]bool            `json:"instant_tried,omitempty"`
 }
 
 func (d *JobData) init() {
@@ -224,6 +227,7 @@ func (a *App) Run(ctx context.Context) {
 		a.scheduleRoot()
 		a.scheduleScan()
 		a.scheduleCleanup()
+		a.scheduleTelDrive()
 		a.dataMu.RUnlock()
 		j, e := jobScan(a.Store.DB.QueryRow(`SELECT `+jobCols+` FROM jobs WHERE state IN ('queued','waiting','retry') AND next_run<=? AND (kind='verify' OR (account_id=? AND EXISTS (SELECT 1 FROM accounts WHERE accounts.id=jobs.account_id AND status='ready'))) ORDER BY CASE WHEN kind='verify' THEN 0 WHEN kind='root' THEN 1 WHEN kind='cleanup' THEN 3 ELSE 2 END,next_run,created,id LIMIT 1`, now(), a.active()))
 		if e != nil {
@@ -277,6 +281,10 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 		c, e = a.client(j.AccountID)
 		if e == nil {
 			switch j.Kind {
+			case "teldrive_scan":
+				e = a.scanTelDrive(ctx, c, j, &d)
+			case "teldrive_upload":
+				e = a.uploadTelDriveJob(ctx, c, j, &d)
 			case "verify":
 				e = a.verify(ctx, c, j)
 			case "root":
@@ -475,10 +483,55 @@ func (a *App) folder(ctx context.Context, c pikpak.Provider, account, nodeID str
 	if e != nil {
 		return "", e
 	}
+	directKey := "teldrive_folder:" + account + ":" + n.ID
+	directRequest := jsonText(map[string]string{"parent": parent, "name": n.Name})
+	if n.SourceID == "" && n.SourceKey != "" && a.Store.Get(directKey) == directRequest {
+		matches := []pikpak.File{}
+		for _, f := range files {
+			if f.Name == n.Name {
+				matches = append(matches, f)
+			}
+		}
+		if len(matches) == 1 && matches[0].Folder() {
+			f := matches[0]
+			if e = a.align(ctx, c, account, n, f, parent); e != nil {
+				return "", e
+			}
+			_, _ = a.Store.DB.Exec(`DELETE FROM settings WHERE key=?`, directKey)
+			return f.ID, nil
+		}
+	}
 	for _, f := range files {
 		if f.Name == n.Name {
 			return "", block("An untracked item already uses directory name: " + n.Name)
 		}
+	}
+	if n.SourceID == "" && n.SourceKey != "" {
+		// TelDrive directories have stable source IDs. Create at their final name
+		// once; an uncertain response requires review instead of folder churn.
+		key := directKey
+		if a.Store.Get(key) != "" {
+			return "", block("TelDrive 文件夹创建响应不确定，请先核对远端目录后重试")
+		}
+		if e = a.Store.Set(key, directRequest); e != nil {
+			return "", e
+		}
+		f, e := c.Mkdir(ctx, parent, n.Name)
+		if e != nil {
+			var up *pikpak.APIError
+			if errors.Is(e, errPaused) || (errors.As(e, &up) && (up.Status == 400 || up.Status == 401 || up.Status == 403 || up.Status == 429)) {
+				_, _ = a.Store.DB.Exec(`DELETE FROM settings WHERE key=?`, key)
+			}
+			return "", e
+		}
+		if e = a.Store.Bind(account, n.ID, f.ID, "pending", f.Name, f.ParentID, ""); e != nil {
+			return "", e
+		}
+		if e = a.align(ctx, c, account, n, f, parent); e != nil {
+			return "", e
+		}
+		_, _ = a.Store.DB.Exec(`DELETE FROM settings WHERE key=?`, key)
+		return f.ID, nil
 	}
 	// Persist an unpredictable creation name before dispatch, so a lost response can be reconciled.
 	marker := ".vault-folder-" + n.ID
@@ -995,6 +1048,13 @@ func (a *App) restoreNode(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 			}
 		} else if !pikpak.Missing(e) {
 			return e
+		}
+	}
+	// TelDrive upload tickets already attempt GCID deduplication. Keep their
+	// upload session instead of creating a disposable instant-upload placeholder.
+	if n.SourceID != "" {
+		if source, err := a.Store.Source(n.SourceID); err == nil && source.Kind == "teldrive" {
+			return a.uploadTelDrive(ctx, c, j, d, n)
 		}
 	}
 	_, legacyInstant := d.InstantTried[n.ID]

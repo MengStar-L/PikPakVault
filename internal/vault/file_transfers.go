@@ -26,7 +26,7 @@ func fileTransfers(tx *sql.Tx, account, parent string, q url.Values) ([]Node, ma
 	rows, err := tx.Query(`SELECT j.id,j.title,j.state,j.progress,j.message,j.created,j.updated,j.data,s.kind,s.manifest
 		FROM jobs j JOIN sources s ON s.id=json_extract(j.data,'$.source_id')
 		JOIN nodes target ON target.id=COALESCE(NULLIF(json_extract(j.data,'$.parent_id'),''),'root') AND target.trashed=0
-		WHERE j.account_id=? AND j.kind='import' AND j.state NOT IN ('completed','cancelled') ORDER BY j.created,j.id`, account)
+		WHERE j.account_id=? AND j.kind IN ('import','teldrive_upload') AND j.state NOT IN ('completed','cancelled') ORDER BY j.created,j.id`, account)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -104,7 +104,7 @@ func fileTransfers(tx *sql.Tx, account, parent string, q url.Values) ([]Node, ma
 	// Include trashed/moved nodes: an already registered result must not reappear
 	// as a fresh placeholder at the original import destination.
 	rows, err = tx.Query(`SELECT source_id,source_path FROM nodes WHERE source_id IN
-		(SELECT json_extract(data,'$.source_id') FROM jobs WHERE account_id=? AND kind='import' AND state NOT IN ('completed','cancelled'))`, account)
+		(SELECT json_extract(data,'$.source_id') FROM jobs WHERE account_id=? AND kind IN ('import','teldrive_upload') AND state NOT IN ('completed','cancelled'))`, account)
 	if err != nil {
 		return nil, nil, err
 	}

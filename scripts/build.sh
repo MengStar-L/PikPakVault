@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
-version=${1:-0.2.1}
+version=${1:-0.3.0}
 npm ci --prefix web
 npm run build --prefix web
 go test ./...

@@ -6,6 +6,9 @@ The PikPak protocol constants and captcha-sign salt values in `internal/pikpak/c
 
 - https://github.com/rclone/rclone/tree/master/backend/pikpak
 - https://github.com/Quan666/PikPakAPI (request/response reference only)
+- TelDrive API schema and authentication/stream behavior: https://github.com/tgdrive/teldrive and https://github.com/tgdrive/teldrive-docs (protocol reference only; no TelDrive code bundled).
+
+GCID calculation and resumable upload protocol in `internal/pikpak/upload.go` also follow the MIT-licensed rclone PikPak backend. S3 signing and transport use AWS SDK for Go v2 (Apache-2.0).
 
 ## rclone MIT license notice
 

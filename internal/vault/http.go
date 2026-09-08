@@ -144,6 +144,11 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 		return a.setup(w, r)
 	}))
 	private := http.NewServeMux()
+	private.HandleFunc("GET /api/v1/teldrive", a.endpoint(a.telDriveList))
+	private.HandleFunc("POST /api/v1/teldrive", a.endpoint(a.telDriveSave))
+	private.HandleFunc("PATCH /api/v1/teldrive/{id}", a.endpoint(a.telDriveSave))
+	private.HandleFunc("POST /api/v1/teldrive/browse", a.endpoint(a.telDriveBrowse))
+	private.HandleFunc("POST /api/v1/teldrive/{id}/sync", a.endpoint(a.telDriveSync))
 	private.HandleFunc("POST /api/v1/auth/logout", a.endpoint(a.logout))
 	private.HandleFunc("GET /api/v1/summary", a.endpoint(a.summary))
 	private.HandleFunc("GET /api/v1/accounts", a.endpoint(a.accountsList))
@@ -240,7 +245,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	})
 }
 
-var Version = "0.2.1"
+var Version = "0.3.0"
 
 func (a *App) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -976,6 +981,9 @@ func (a *App) sourceUpdate(w http.ResponseWriter, r *http.Request) error {
 	s, e := a.Store.Source(r.PathValue("id"))
 	if e != nil {
 		return e
+	}
+	if s.Kind == "teldrive" {
+		return fail(400, "请在 TelDrive 同步中更新连接认证；文件来源由监控记录管理")
 	}
 	newSource, e := ParseSource(v.Link, v.PassCode)
 	if e != nil {

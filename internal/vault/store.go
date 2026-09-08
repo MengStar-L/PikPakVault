@@ -73,7 +73,7 @@ func Open(dir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	if version > 1 {
+	if version > 2 {
 		db.Close()
 		return nil, fmt.Errorf("database schema %d requires a newer PikPak Vault", version)
 	}
@@ -121,7 +121,8 @@ CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY,account_id TEXT NOT NULL,ki
 CREATE INDEX IF NOT EXISTS jobs_schedule ON jobs(state,next_run,created);
 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,detail TEXT NOT NULL,created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,csrf TEXT NOT NULL,expires INTEGER NOT NULL);
-PRAGMA user_version=1;
+CREATE TABLE IF NOT EXISTS teldrive_monitors (id TEXT PRIMARY KEY,name TEXT NOT NULL,base_url TEXT NOT NULL,folder_id TEXT NOT NULL,folder_path TEXT NOT NULL,parent_id TEXT NOT NULL,secret TEXT NOT NULL,auto_minutes INTEGER NOT NULL DEFAULT 0,last_run INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
+PRAGMA user_version=2;
 `
 
 func (s *Store) Get(k string) string {

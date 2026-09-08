@@ -22,6 +22,16 @@ const maxBackupUpload = 512 << 20
 
 var importTables = []string{"settings", "accounts", "sources", "nodes", "bindings", "jobs", "events"}
 
+func backupTables(s *Store) []string {
+	tables := append([]string{}, importTables...)
+	var version int
+	_ = s.DB.QueryRow(`PRAGMA user_version`).Scan(&version)
+	if version >= 2 {
+		tables = append(tables, "teldrive_monitors")
+	}
+	return tables
+}
+
 type BackupPreview struct {
 	ID       string `json:"id"`
 	Accounts int    `json:"accounts"`
@@ -110,7 +120,7 @@ func validateBackup(s *Store) error {
 	}
 	var version int
 	var integrity string
-	if e := s.DB.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version != 1 {
+	if e := s.DB.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version < 1 || version > 2 {
 		return fmt.Errorf("不支持该备份数据库版本，请先升级程序")
 	}
 	if e := s.DB.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); e != nil || integrity != "ok" {
@@ -129,7 +139,7 @@ func validateBackup(s *Store) error {
 	if bad {
 		return fmt.Errorf("备份数据引用关系不完整")
 	}
-	for _, table := range append(append([]string{}, importTables...), "sessions") {
+	for _, table := range append(backupTables(s), "sessions") {
 		var count int
 		if e = s.DB.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); e != nil {
 			return fmt.Errorf("备份缺少必要的数据表：%s", table)
@@ -151,7 +161,11 @@ func validateBackup(s *Store) error {
 	if e = s.DB.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id='root' AND kind='folder' AND parent_id=''`).Scan(&root); e != nil || root != 1 {
 		return fmt.Errorf("备份的根目录记录无效")
 	}
-	for _, table := range []string{"accounts", "sources"} {
+	secretTables := []string{"accounts", "sources"}
+	if version >= 2 {
+		secretTables = append(secretTables, "teldrive_monitors")
+	}
+	for _, table := range secretTables {
 		rows, e := s.DB.Query(`SELECT secret FROM ` + table)
 		if e != nil {
 			return e
@@ -174,6 +188,26 @@ func validateBackup(s *Store) error {
 		if e != nil {
 			return fmt.Errorf("备份密钥无法解密 %s 中的认证信息", table)
 		}
+	}
+	rows, e = s.DB.Query(`SELECT data FROM jobs WHERE json_type(data,'$.uploads')='object'`)
+	if e != nil {
+		return e
+	}
+	for rows.Next() {
+		var data string
+		if e = rows.Scan(&data); e != nil {
+			break
+		}
+		if _, e = rewrapTelDriveJobs(s, s, data); e != nil {
+			break
+		}
+	}
+	if e == nil {
+		e = rows.Err()
+	}
+	rows.Close()
+	if e != nil {
+		return fmt.Errorf("备份上传会话校验失败：%w", e)
 	}
 	return nil
 }
@@ -332,12 +366,12 @@ func replaceData(dst, src *Store) error {
 		return e
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"sessions", "bindings", "accounts", "sources", "nodes", "jobs", "events", "settings"} {
+	for _, table := range []string{"sessions", "bindings", "accounts", "sources", "nodes", "jobs", "events", "settings", "teldrive_monitors"} {
 		if _, e = tx.Exec(`DELETE FROM ` + table); e != nil {
 			return e
 		}
 	}
-	for _, table := range importTables {
+	for _, table := range backupTables(src) {
 		rows, err := src.DB.Query(`SELECT * FROM ` + table)
 		if err != nil {
 			return err
@@ -362,7 +396,7 @@ func replaceData(dst, src *Store) error {
 				break
 			}
 			for i, col := range cols {
-				if col == "secret" && (table == "accounts" || table == "sources") {
+				if col == "secret" && (table == "accounts" || table == "sources" || table == "teldrive_monitors") {
 					var raw json.RawMessage
 					secret, ok := values[i].(string)
 					if !ok {
@@ -373,6 +407,19 @@ func replaceData(dst, src *Store) error {
 						break
 					}
 					values[i], e = dst.Seal(raw)
+					if e != nil {
+						break
+					}
+				}
+				if table == "jobs" && col == "data" {
+					// Upload sessions carry encrypted, expiring storage credentials.
+					// Rewrap them with the destination key alongside account tokens.
+					value, ok := values[i].(string)
+					if !ok {
+						e = fmt.Errorf("任务数据类型无效")
+						break
+					}
+					values[i], e = rewrapTelDriveJobs(src, dst, value)
 					if e != nil {
 						break
 					}

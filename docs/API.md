@@ -85,3 +85,16 @@ JSON 错误：`{"error":"可读原因"}`。PikPak 错误另提供 `code`、`endp
 - `POST /updates/install`：`{tag, confirm:true}`，仅 systemd 安装可用，返回 202；后续轮询状态。
 - 更新阶段：queued → downloading → stopping → installing → verifying → completed；失败为 failed / rolled_back，恢复失败保持 rolling_back 以便独立服务重试。
 - `/healthz` 返回版本、PID、就绪状态和更新实例标记；更新检查期间 `ready:false`，用户写入与后台调度暂停。
+## TelDrive 同步接口
+
+以下接口均需管理员会话；写请求需 `X-CSRF-Token`。认证信息仅写入，不返回。
+
+| 方法 | `/api/v1` 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/teldrive` | 监控列表、目标路径、最近扫描任务、当前账号 |
+| POST | `/teldrive/browse` | 使用 `base_url`、`token`、`folder_id`、`page` 浏览来源；已有监控可传 `id` 并留空 token |
+| POST | `/teldrive` | 新建；字段 `name`、`base_url`、`token`、`folder_id`、`folder_path`、`parent_id`、`auto_minutes` |
+| PATCH | `/teldrive/{id}` | 修改名称、认证与周期；来源和目标必须与原规则一致 |
+| POST | `/teldrive/{id}/sync` | 扫描并排队上传，202 返回绑定当前账号的任务；重复提交返回已有活跃扫描 |
+
+`auto_minutes=0` 仅手动，开启范围 5–10080。来源 `folder_id=""` 表示 TelDrive 根目录，目标 `parent_id="root"` 表示本资源库根目录。任务类型为 `teldrive_scan` 和 `teldrive_upload`，控制与进度复用现有 jobs、SSE 和文件传输状态接口。

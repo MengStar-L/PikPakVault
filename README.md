@@ -26,6 +26,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 | --- | --- |
 | 📁 文件资源库 | 网格 / 列表、完整路径面包屑、搜索、分类、收藏、拖动移动、多选、右键菜单和回收站 |
 | 🔗 来源留存 | 批量磁链、带提取码分享、分享预览与文件选择；逐文件记录原始来源和相对路径 |
+| 📨 TelDrive 同步 | 监控指定文件夹，手动 / 定时上传至当前 PikPak 账号；保留层级、跳过已保存文件、分片续传 |
 | ☁️ 云端账号 | 保存多个账号、切换活动账号；默认专用目录 `My Pack/PikPakVault`，设置中可自定义 |
 | ✨ 即时反馈 | 在当前文件夹创建传输任务，直接显示传输中的文件与进度；持久化任务、断线重连 |
 | 🎞️ 预览与播放 | 图片、文本、PDF、音视频；倍速、进度记忆、上游清晰度；可选文件夹视频封面 |
@@ -42,7 +43,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 从 [Releases](https://github.com/MengStar-L/PikPakVault/releases/latest) 下载对应架构安装包与 `SHA256SUMS`，也可以执行：
 
 ```bash
-version=0.2.1
+version=0.3.0
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -80,6 +81,12 @@ curl -fsS http://127.0.0.1:5675/healthz
 
 公网长期使用可参考 [Caddy 示例](deploy/Caddyfile.example) 配置 HTTPS，将 `VAULT_SECURE_COOKIES=true` 写入环境文件后重启服务。只通过 SSH 隧道访问时，可改为监听 `127.0.0.1:5675`。
 
+## TelDrive 文件夹同步
+
+进入侧栏 **TelDrive 同步**，填写站点地址和 access_token，浏览选择来源目录与保存位置。默认仅手动，也可开启定时同步。文件流经服务器，直接上传到 PikPak，不缓存整份文件。
+
+配置、流量消耗与恢复规则见 [TelDrive 使用说明](docs/TELDRIVE.md)。
+
 ## 程序更新
 
 进入 **设置 → 程序更新 → 检查更新**。发现新版本后查看发布说明，点击「安装更新」，再确认安装与重启。**检查更新不会自动安装。**
@@ -99,7 +106,7 @@ sudo bash deploy/update.sh v0.3.0
 
 ## 完整备份与迁移
 
-**导出：** 设置 → 本地备份 → 下载完整备份。ZIP 包含 `vault.db` 与 `master.key`，覆盖所有账号认证信息、分享提取码、目录、来源清单、各账号映射、收藏、播放记录、管理员密码、设置、任务与操作日志。
+**导出：** 设置 → 本地备份 → 下载完整备份。ZIP 包含 `vault.db` 与 `master.key`，覆盖所有账号认证信息、分享提取码、目录、来源清单、各账号映射、收藏、播放记录、管理员密码、设置、任务与操作日志，也包含 TelDrive 监控、认证信息及尚未过期的上传会话。
 
 **导入现有实例：** 设置 → 导入完整备份 → 校验预览 → 输入当前管理员密码 → 确认替换。程序在本地保留 `before-import-*.zip`，事务失败时当前数据不变。
 
@@ -140,7 +147,7 @@ go test ./...
 go run ./cmd/vault serve --data ./data --listen 127.0.0.1:5675
 
 # Linux 双架构发布包
-bash scripts/build.sh 0.2.1
+bash scripts/build.sh 0.3.0
 ```
 
 前端 React 19 + TypeScript + Vite + Tailwind / Radix / Motion，后端 Go `net/http` + SQLite。前端产物嵌入可执行文件。开发热更新使用 `npm run dev --prefix web`。Docker 可执行 `docker compose up -d --build`。
