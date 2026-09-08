@@ -1,0 +1,5 @@
+vault.example.com {
+    reverse_proxy 127.0.0.1:5675 {
+        flush_interval -1
+    }
+}

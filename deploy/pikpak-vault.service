@@ -1,0 +1,28 @@
+[Unit]
+Description=PikPak Vault personal resource library
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pikpak-vault
+Group=pikpak-vault
+WorkingDirectory=/var/lib/pikpak-vault
+EnvironmentFile=-/etc/pikpak-vault.env
+Environment=VAULT_MANAGED=systemd
+EnvironmentFile=-/var/lib/pikpak-vault-updater/startup.env
+ExecStart=/opt/pikpakvalue/vault serve --data /var/lib/pikpak-vault
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pikpak-vault
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

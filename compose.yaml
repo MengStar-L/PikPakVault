@@ -1,0 +1,14 @@
+services:
+  vault:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5675:5675"
+    volumes:
+      - vault-data:/data
+    environment:
+      TZ: Asia/Shanghai
+      VAULT_SECURE_COOKIES: "${VAULT_SECURE_COOKIES:-false}"
+    stop_grace_period: 30s
+volumes:
+  vault-data:

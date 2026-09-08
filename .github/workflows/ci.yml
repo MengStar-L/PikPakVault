@@ -1,0 +1,65 @@
+name: Build and test
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: npm ci --prefix web
+      - run: npm run build --prefix web
+      - run: go test -race ./... && go vet ./...
+      - run: npx --prefix web playwright install --with-deps chromium
+      - name: Browser regression suite
+        run: |
+          VAULT_E2E=1 go test ./internal/vault -run '^TestServeE2E$' -v -timeout=0 > /tmp/vault-e2e.log 2>&1 &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8088/healthz; then break; fi
+            sleep 1
+          done
+          npm run test:e2e --prefix web
+      - name: Linux artifacts
+        run: bash scripts/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pikpak-vault-linux
+          path: |
+            bin/*.tar.gz
+            bin/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-report
+          path: artifacts/
+  systemd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: npm ci --prefix web && npm run build --prefix web
+      - name: Real systemd update, failed readiness, and killed updater recovery
+        run: |
+          go test -c -o /tmp/vault-systemd-tests ./cmd/vault
+          cd cmd/vault
+          sudo env PATH="$PATH" GOMODCACHE="$(go env GOMODCACHE)" VAULT_SYSTEMD_TEST=1 /tmp/vault-systemd-tests -test.run '^TestSystemdLifecycle$' -test.v -test.timeout 8m

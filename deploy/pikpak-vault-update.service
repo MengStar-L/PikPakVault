@@ -1,0 +1,24 @@
+[Unit]
+Description=PikPak Vault independent update and recovery worker
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/pikpak-vault.env
+ExecStart=/usr/local/lib/pikpak-vault/maintenance maintenance
+TimeoutStartSec=20min
+Restart=on-failure
+RestartSec=15s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/pikpakvalue /var/lib/pikpak-vault /var/lib/pikpak-vault-updater /usr/local/lib/pikpak-vault
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

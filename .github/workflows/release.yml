@@ -1,0 +1,47 @@
+name: Publish release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Require passing CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git rev-list -n 1 "$GITHUB_REF_NAME")
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&status=success" --jq '[.workflow_runs[] | select(.head_branch == "main")] | length')
+          test "$count" -gt 0
+      - name: Build and inspect release packages
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          bash scripts/build.sh "$version"
+          python3 scripts/verify-release.py "$version" bin
+          mkdir /tmp/vault-release-check
+          tar -xzf "bin/pikpak-vault-$version-linux-amd64.tar.gz" -C /tmp/vault-release-check
+          test "$(/tmp/vault-release-check/vault version)" = "$version"
+      - name: Draft, verify published asset bytes, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "PikPak Vault $GITHUB_REF_NAME" --notes-file docs/RELEASE.md bin/*.tar.gz bin/SHA256SUMS
+          mkdir /tmp/vault-release-download
+          gh release download "$GITHUB_REF_NAME" --dir /tmp/vault-release-download
+          python3 scripts/verify-release.py "$version" /tmp/vault-release-download
+          cmp bin/SHA256SUMS /tmp/vault-release-download/SHA256SUMS
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
