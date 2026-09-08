@@ -23,3 +23,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ## Dependencies
 
 The exact versions are pinned in `go.sum` and `web/package-lock.json`. Go dependencies include modernc SQLite (BSD-3-Clause), golang.org/x/crypto (BSD-3-Clause), and gofrs/flock (BSD-3-Clause). Frontend dependencies include React, Vite, Tailwind CSS, Radix UI, Motion, TanStack Query/Virtual, hls.js, Sonner, and Lucide under their respective open-source licenses. Vidstack is MIT-licensed. Outfit fonts are distributed under SIL Open Font License 1.1 by the upstream `@fontsource/outfit` package. No remote font service is used at runtime.
+
+## Managed aria2 runtime
+
+The application downloads aria2 1.37.0 as a separate executable; it is not linked into the Go binary. aria2 is licensed under GPL-2.0-or-later. Windows binaries and corresponding source: https://github.com/aria2/aria2/releases/tag/release-1.37.0. Linux static binaries, build instructions and source references: https://github.com/abcfy2/aria2-static-build/tree/1.37.0. Upstream source: https://github.com/aria2/aria2. Archive and executable SHA-256 values are pinned in internal/aria2/install.go.

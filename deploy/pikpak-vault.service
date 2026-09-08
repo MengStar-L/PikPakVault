@@ -21,6 +21,7 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/pikpak-vault
+ReadWritePaths=/opt/pikpakvalue/runtime /opt/pikpakvalue/downloads
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LimitNOFILE=65536
 

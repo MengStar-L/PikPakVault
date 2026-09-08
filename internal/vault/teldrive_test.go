@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"pikpakvault/internal/pikpak"
@@ -16,6 +18,7 @@ import (
 )
 
 type tdFixture struct {
+	downloads                  atomic.Int32
 	server                     *httptest.Server
 	files                      map[string]teldrive.File
 	body                       string
@@ -58,6 +61,7 @@ func telDriveFixture(t *testing.T) *tdFixture {
 			return
 		}
 		if r.URL.Path == "/api/files/movie/movie.mp4" {
+			f.downloads.Add(1)
 			var start, end int64
 			fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end)
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(f.body)))
@@ -78,6 +82,66 @@ func telDriveFixture(t *testing.T) *tdFixture {
 	}))
 	t.Cleanup(f.server.Close)
 	return f
+}
+
+func TestTelDriveManagedCacheCleanupKeepsUploadSession(t *testing.T) {
+	a, f := testApp(t)
+	td := telDriveFixture(t)
+	drive := &uploadFake{fakeDrive: f}
+	a.Factory = func(Account) (pikpak.Provider, error) { return drive, nil }
+	m := addMonitor(t, a, td)
+	runTDScan(t, a, m)
+	j := tdUploadJob(t, a, "a")
+	id := stableNode(m.ID, "movie")
+	dir := a.telDriveCacheDir(j.ID, id)
+	addAccount(t, a, "b", "user-b")
+	drive.beforeContent = func() {
+		w := request(t, a.Handler(nil), "POST", "/api/v1/teldrive/cache/clear", map[string]any{}, "test-csrf")
+		if w.Code != 409 {
+			t.Fatal("cleanup raced active upload", w.Code, w.Body.String())
+		}
+		a.Store.Set("active_account", "b")
+	}
+	a.Execute(context.Background(), &j)
+	if j.State != "paused" || drive.begins != 1 || drive.sends != 0 {
+		t.Fatal(j, drive.begins, drive.sends)
+	}
+	if td.downloads.Load() != 1 {
+		t.Fatal("downloaded more than once", td.downloads.Load())
+	}
+	if _, e := os.Stat(filepath.Join(dir, "content")); e != nil {
+		t.Fatal("paused cache lost", e)
+	}
+	status, e := a.cacheStatus(false)
+	if e != nil || status.Files != 1 || status.Reclaimable == 0 || !status.Available {
+		t.Fatal(status, e)
+	}
+	w := request(t, a.Handler(nil), "POST", "/api/v1/teldrive/cache/clear", map[string]any{}, "test-csrf")
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if _, e = os.Stat(dir); !os.IsNotExist(e) {
+		t.Fatal("cache still exists", e)
+	}
+	saved, _ := a.Store.Job(j.ID)
+	var d JobData
+	json.Unmarshal(saved.Data, &d)
+	if d.Uploads[id].Secret == "" || d.Uploads[id].RemoteID == "" {
+		t.Fatal("cleanup discarded upload session")
+	}
+	a.Store.Set("active_account", "a")
+	j.State = "queued"
+	a.Store.SaveJob(&j, nil)
+	a.Execute(context.Background(), &j)
+	if j.State != "completed" || drive.begins != 1 || drive.sends != 1 {
+		t.Fatal("duplicated after cache cleanup", j, drive.begins, drive.sends)
+	}
+	if td.downloads.Load() != 2 {
+		t.Fatal("expected one replacement download", td.downloads.Load())
+	}
+	if _, e = os.Stat(dir); !os.IsNotExist(e) {
+		t.Fatal("successful upload retained cache", e)
+	}
 }
 func addMonitor(t *testing.T, a *App, f *tdFixture) TelDriveMonitor {
 	t.Helper()

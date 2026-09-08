@@ -145,6 +145,8 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	}))
 	private := http.NewServeMux()
 	private.HandleFunc("GET /api/v1/teldrive", a.endpoint(a.telDriveList))
+	private.HandleFunc("GET /api/v1/teldrive/cache", a.endpoint(a.telDriveCacheGet))
+	private.HandleFunc("POST /api/v1/teldrive/cache/clear", a.endpoint(a.telDriveCacheClear))
 	private.HandleFunc("POST /api/v1/teldrive", a.endpoint(a.telDriveSave))
 	private.HandleFunc("PATCH /api/v1/teldrive/{id}", a.endpoint(a.telDriveSave))
 	private.HandleFunc("POST /api/v1/teldrive/browse", a.endpoint(a.telDriveBrowse))
@@ -223,9 +225,9 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// SSE owns no long-lived database reference; it rechecks sessions each tick.
-		if strings.HasSuffix(r.URL.Path, "/import/commit") {
+		if strings.HasSuffix(r.URL.Path, "/import/commit") || r.URL.Path == "/api/v1/teldrive/cache/clear" {
 			if !a.dataMu.TryLock() {
-				writeJSON(w, 409, map[string]string{"error": "有请求或任务正在执行，请稍后重试导入"})
+				writeJSON(w, 409, map[string]string{"error": "有请求或任务正在执行，请暂停并等待结束后重试"})
 				return
 			}
 			defer a.dataMu.Unlock()
@@ -245,7 +247,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	})
 }
 
-var Version = "0.3.1"
+var Version = "0.3.2"
 
 func (a *App) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

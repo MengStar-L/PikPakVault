@@ -5,6 +5,8 @@ set -Eeuo pipefail
 tag=${1:-}
 [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo 'Usage: sudo bash deploy/update.sh vX.Y.Z' >&2; exit 1; }
 command -v systemctl >/dev/null
+runtime_setup="$(dirname -- "${BASH_SOURCE[0]}")/prepare-runtime.sh"
+[[ -f "$runtime_setup" ]] && bash "$runtime_setup"
 [[ -x /usr/local/lib/pikpak-vault/maintenance ]] || { echo 'Install the update components first.' >&2; exit 1; }
 systemctl is-active --quiet pikpak-vault-update.service && { echo 'An updater is running.' >&2; exit 1; }
 request_file=/var/lib/pikpak-vault/update-request.json

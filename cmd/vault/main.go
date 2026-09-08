@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"pikpakvault/internal/aria2"
 	"pikpakvault/internal/update"
 	"pikpakvault/internal/vault"
 	"pikpakvault/web"
@@ -29,6 +30,16 @@ func env(key, fallback string) string {
 func main() {
 	command := "serve"
 	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "prepare-aria2" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		file, err := aria2.Ensure(ctx, aria2.ProgramDir())
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Managed aria2 ready:", file)
+		return
+	}
 	if len(args) > 0 && args[0] == "version" {
 		fmt.Println(vault.Version)
 		return

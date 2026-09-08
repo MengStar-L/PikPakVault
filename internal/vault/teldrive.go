@@ -8,9 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+
 	"strings"
 	"time"
 
+	"pikpakvault/internal/aria2"
 	"pikpakvault/internal/pikpak"
 	"pikpakvault/internal/teldrive"
 )
@@ -495,7 +498,14 @@ func (p *progressReader) Read(b []byte) (int, error) {
 	}
 	return n, e
 }
-func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *JobData, n Node) error {
+func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *JobData, n Node) (result error) {
+	defer func() {
+		if result == nil {
+			if err := aria2.Remove(a.telDriveCacheDir(j.ID, n.ID)); err != nil {
+				d.Note += "；下载缓存清理未完成，可在 TelDrive 页面重试清理"
+			}
+		}
+	}()
 	if e := a.telDriveNodeActive(n.ID); e != nil {
 		return e
 	}
@@ -562,58 +572,62 @@ func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *
 	if current.Size > int64(64<<20)*10000 {
 		return block("文件超过当前上传上限（625 GiB）")
 	}
-	if u.GCID == "" {
-		j.Message = "读取 TelDrive 文件并计算上传指纹"
-		if e = a.checkpoint(j, d); e != nil {
-			return e
-		}
-		var reader io.ReadCloser
-		if current.Size == 0 {
-			reader = io.NopCloser(strings.NewReader(""))
-		} else {
-			reader, e = td.OpenRange(ctx, current, 0, current.Size)
-			if e != nil {
-				return e
-			}
-		}
-		pr := &progressReader{Reader: reader, update: func(read int64) error {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			j.Progress = int(read * 30 / max(current.Size, 1))
-			j.Message = fmt.Sprintf("读取来源 %d / %d 字节", read, current.Size)
-			if e := a.telDriveNodeActive(n.ID); e != nil {
-				return e
-			}
-			return a.checkpoint(j, d)
-		}}
-		u.GCID, e = pikpak.GCID(pr, current.Size)
-		reader.Close()
-		if e != nil {
-			return fmt.Errorf("读取 TelDrive 文件计算指纹失败（已读取 %d / %d 字节），请在原传输任务中重试：%w", pr.read, current.Size, e)
-		}
-		if n.Hash != "" && !strings.EqualFold(n.Hash, u.GCID) {
-			return block("TelDrive 文件指纹与已保存内容不符")
-		}
-		check, err := td.Get(ctx, ref.File.ID)
-		if err != nil {
-			return err
-		}
-		if !sameTelDriveFile(current, check) {
-			u.GCID = ""
-			return block("TelDrive 文件在读取期间发生变化，已停止上传")
-		}
-		if e = a.checkpoint(j, d); e != nil {
-			return e
-		}
-	}
-	n.Hash = u.GCID
 	var session pikpak.UploadSession
 	if u.Secret != "" {
 		if e = a.Store.Unseal(u.Secret, &session); e != nil {
 			return e
 		}
 	}
+	var cached *os.File
+	if !session.Sent {
+		j.Message = "正在准备 aria2 下载缓存"
+		if e = a.checkpoint(j, d); e != nil {
+			return e
+		}
+		cachePath, err := a.downloadTelDrive(ctx, j, d, n, td, current)
+		if err != nil {
+			return err
+		}
+		cached, e = os.Open(cachePath)
+		if e != nil {
+			return e
+		}
+		defer cached.Close()
+		j.Message = "下载完成，正在校验本地文件指纹"
+		if e = a.checkpoint(j, d); e != nil {
+			return e
+		}
+		pr := &progressReader{Reader: cached, update: func(read int64) error {
+			if e := ctx.Err(); e != nil {
+				return e
+			}
+			if e := a.telDriveNodeActive(n.ID); e != nil {
+				return e
+			}
+			j.Progress = 25 + int(read*5/max(current.Size, 1))
+			j.Message = fmt.Sprintf("校验下载文件 · %s / %s", humanBytes(read), humanBytes(current.Size))
+			return a.checkpoint(j, d)
+		}}
+		hash, err := pikpak.GCID(pr, current.Size)
+		if err != nil {
+			return fmt.Errorf("下载文件校验失败：%w", err)
+		}
+		if (n.Hash != "" && !strings.EqualFold(n.Hash, hash)) || (u.GCID != "" && !strings.EqualFold(u.GCID, hash)) {
+			return block("下载文件指纹与已保存内容不符，请核对来源并清理缓存后重试")
+		}
+		check, err := td.Get(ctx, ref.File.ID)
+		if err != nil {
+			return err
+		}
+		if !sameTelDriveFile(current, check) {
+			return block("TelDrive 文件在下载期间发生变化，请清理缓存并核对来源")
+		}
+		u.GCID = hash
+		if e = a.checkpoint(j, d); e != nil {
+			return e
+		}
+	}
+	n.Hash = u.GCID
 	if u.Attempted && u.RemoteID == "" {
 		files, e := listAll(ctx, c, u.Parent)
 		if e != nil {
@@ -704,23 +718,18 @@ func (a *App) uploadTelDrive(ctx context.Context, c pikpak.Provider, j *Job, d *
 			if length == 0 {
 				return []byte{}, nil
 			}
-			r, e := td.OpenRange(ctx, current, offset, length)
-			if e != nil {
+			if e := ctx.Err(); e != nil {
 				return nil, e
 			}
-			defer r.Close()
-			pr := &progressReader{Reader: r, update: func(_ int64) error {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				return a.checkpoint(j, d)
-			}}
-			b, e := io.ReadAll(io.LimitReader(pr, length+1))
-			if e != nil {
+			if e := a.telDriveNodeActive(n.ID); e != nil {
 				return nil, e
 			}
-			if int64(len(b)) != length {
-				return nil, fmt.Errorf("TelDrive 文件流提前结束或长度不符")
+			if cached == nil || offset < 0 || length < 0 || length > 64<<20 || offset > n.Size || length > n.Size-offset {
+				return nil, fmt.Errorf("本地上传缓存或读取范围无效")
+			}
+			b := make([]byte, int(length))
+			if _, e := cached.ReadAt(b, offset); e != nil {
+				return nil, e
 			}
 			return b, nil
 		}

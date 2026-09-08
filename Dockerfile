@@ -12,15 +12,15 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /src/web/dist ./web/dist
 ARG TARGETARCH
-ARG VERSION=0.2.1
+ARG VERSION=0.3.2
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags="-s -w -X pikpakvault/internal/vault.Version=${VERSION}" -o /vault ./cmd/vault
 
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates tzdata && addgroup -S -g 10001 vault && adduser -S -u 10001 -G vault vault && mkdir /data && chown vault:vault /data
-COPY --from=backend /vault /usr/local/bin/vault
+RUN apk add --no-cache ca-certificates tzdata && addgroup -S -g 10001 vault && adduser -S -u 10001 -G vault vault && mkdir -p /data /opt/pikpakvalue/runtime /opt/pikpakvalue/downloads && chown vault:vault /data /opt/pikpakvalue/runtime /opt/pikpakvalue/downloads
+COPY --from=backend /vault /opt/pikpakvalue/vault
 USER vault
 ENV VAULT_DATA=/data VAULT_LISTEN=0.0.0.0:5675
-VOLUME ["/data"]
+VOLUME ["/data", "/opt/pikpakvalue/runtime", "/opt/pikpakvalue/downloads"]
 EXPOSE 5675
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD wget -q -O /dev/null http://127.0.0.1:5675/healthz || exit 1
-ENTRYPOINT ["/usr/local/bin/vault"]
+ENTRYPOINT ["/opt/pikpakvalue/vault"]

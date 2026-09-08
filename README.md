@@ -34,7 +34,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 | 📦 完整迁移 | 导出 / 导入全部数据库与配套密钥，包括账号认证、分享提取码、收藏、播放记录、任务和日志 |
 | 🔄 程序更新 | 检查 GitHub 正式 Release，确认后校验、备份、安装与重启；失败自动回滚 |
 
-> **恢复来源不等于文件备份。** 本程序不在服务器持久化文件内容。原分享失效、磁链不可下载且云端无可用副本时，资源仍可能无法恢复；本地保留路径与失败原因，支持补充新来源。仅管理从本程序存入的资源。
+> **恢复来源不等于文件备份。** 本程序不长期备份文件内容；TelDrive 上传仅使用可清理的临时下载缓存。原分享失效、磁链不可下载且云端无可用副本时，资源仍可能无法恢复；本地保留路径与失败原因，支持补充新来源。仅管理从本程序存入的资源。
 
 ## 快速部署
 
@@ -43,7 +43,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 从 [Releases](https://github.com/MengStar-L/PikPakVault/releases/latest) 下载对应架构安装包与 `SHA256SUMS`，也可以执行：
 
 ```bash
-version=0.3.1
+version=0.3.2
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -65,6 +65,8 @@ sudo journalctl -u pikpak-vault -n 30 --no-pager
 | 安装项 | 默认位置 |
 | --- | --- |
 | 程序 | `/opt/pikpakvalue/vault` |
+| 专用 aria2 | `/opt/pikpakvalue/runtime/aria2/1.37.0/`，首次同步自动下载并校验 |
+| 下载缓存与断点 | `/opt/pikpakvalue/downloads/`，上传核验成功后清理 |
 | 数据库与密钥 | `/var/lib/pikpak-vault/` |
 | 环境配置 | `/etc/pikpak-vault.env` |
 | 监听地址 | `0.0.0.0:5675`（systemd 安装） |
@@ -83,7 +85,7 @@ curl -fsS http://127.0.0.1:5675/healthz
 
 ## TelDrive 文件夹同步
 
-进入侧栏 **TelDrive 同步**，填写站点地址和 access_token，浏览选择来源目录与保存位置。默认仅手动，也可开启定时同步。文件流经服务器，直接上传到 PikPak，不缓存整份文件。
+进入侧栏 **TelDrive 同步**，填写站点地址和 access_token，浏览选择来源目录与保存位置。默认仅手动，也可开启定时同步。程序自动下载并管理独立的 aria2，先把文件下载到程序目录下的缓存，再上传至 PikPak。支持断线续传、暂停和重启续跑；保存成功后自动清理，失败时保留缓存供重试。无需安装系统 aria2 或配置外部 RPC。
 
 配置、流量消耗与恢复规则见 [TelDrive 使用说明](docs/TELDRIVE.md)。
 
@@ -93,13 +95,15 @@ curl -fsS http://127.0.0.1:5675/healthz
 
 更新服务独立于主服务运行：下载正式 Release → 校验 SHA-256、包内路径与 ELF 架构 → 停止主服务 → 备份程序和数据库 / 密钥 → 原子替换程序 → 以普通服务用户启动 → 核对版本、进程、更新标记和数据库健康状态。检查失败时恢复旧程序与更新前数据。中断或服务器重启后，会读取更新记录并恢复原版本。
 
-浏览器会自动重连，也可以刷新查看状态。更新备份不会自动删除。
+浏览器会自动重连，也可以刷新查看状态。更新备份不会自动删除。专用 aria2 和下载缓存不随程序升级替换。
+
+从 **0.3.1 或更早版本** 升级时，首次需在新安装包目录执行 `sudo bash deploy/prepare-runtime.sh`，为原 systemd 服务开放程序下的两个专用可写目录；新版安装脚本和更新脚本会自动执行。然后按正常流程更新。数据库目录与凭据不变。
 
 ```bash
 sudo journalctl -u pikpak-vault-update -n 60 --no-pager
 sudo cat /var/lib/pikpak-vault-updater/status.json
 # 将版本号替换为实际新版本
-sudo bash deploy/update.sh v0.3.1
+sudo bash deploy/update.sh v0.3.2
 ```
 
 更新源默认是本仓库的公开 Releases，可在 root 管理的环境配置中设置 `VAULT_UPDATE_REPOSITORY=owner/repository`。Windows 和 Docker 支持检查与下载链接；网页自动安装仅用于上述 systemd 安装方式。Docker 更新请重新构建镜像并保留数据卷。
@@ -147,7 +151,7 @@ go test ./...
 go run ./cmd/vault serve --data ./data --listen 127.0.0.1:5675
 
 # Linux 双架构发布包
-bash scripts/build.sh 0.3.1
+bash scripts/build.sh 0.3.2
 ```
 
 前端 React 19 + TypeScript + Vite + Tailwind / Radix / Motion，后端 Go `net/http` + SQLite。前端产物嵌入可执行文件。开发热更新使用 `npm run dev --prefix web`。Docker 可执行 `docker compose up -d --build`。

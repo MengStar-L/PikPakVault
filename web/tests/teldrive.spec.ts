@@ -1,5 +1,26 @@
 import { test, expect } from './fixtures'
 
+test('managed aria2 cache shows automatic setup and confirms cleanup',async({page})=>{
+  let current={bytes:1500000000,files:1,reclaimable:1500000000,aria2_available:false}
+  let clear=0
+  await page.route('**/api/v1/teldrive/cache',r=>r.fulfill({json:current}))
+  await page.route('**/api/v1/teldrive/cache/clear',r=>{clear++;current={bytes:0,files:0,reclaimable:0,aria2_available:true};return r.fulfill({json:current})})
+  await page.goto('/teldrive')
+  await expect(page.getByText('首次同步时将自动下载并校验专用 aria2 1.37.0，无需系统安装。')).toBeVisible()
+  for(const width of [1440,768,390]){
+    await page.setViewportSize({width,height:900})
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+    expect(await page.locator('.td-cache').evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true)
+  }
+  await page.getByRole('button',{name:'清理闲置缓存',exact:true}).click()
+  await expect(page.getByRole('dialog')).toContainText('之后重试会重新下载')
+  expect(clear).toBe(0)
+  await page.getByRole('dialog').getByRole('button',{name:'清理缓存',exact:true}).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('button',{name:'清理闲置缓存',exact:true})).toBeDisabled()
+  expect(clear).toBe(1)
+})
+
 test('TelDrive first upload stays in transfers and cannot create duplicate recovery', async ({page})=>{
   const seeded=await page.request.post('/__fixture/teldrive-pending')
   expect(seeded.ok()).toBe(true)

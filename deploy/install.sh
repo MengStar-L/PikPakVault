@@ -9,6 +9,7 @@ command -v curl >/dev/null
 health_url=${VAULT_HEALTH_URL:-http://127.0.0.1:5675/healthz}
 id pikpak-vault >/dev/null 2>&1 || useradd --system --home-dir /var/lib/pikpak-vault --shell /usr/sbin/nologin pikpak-vault
 install -d -m 0755 /opt/pikpakvalue
+bash "$bundle_dir/deploy/prepare-runtime.sh"
 install -d -m 0700 -o pikpak-vault -g pikpak-vault /var/lib/pikpak-vault
 install -m 0755 "$bundle_dir/vault" /opt/pikpakvalue/vault
 install -m 0644 "$bundle_dir/deploy/pikpak-vault.service" /etc/systemd/system/pikpak-vault.service
