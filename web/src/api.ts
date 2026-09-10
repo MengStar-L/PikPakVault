@@ -3,6 +3,7 @@ export type FileNode = { folder_previews?: {id:string;url:string}[]; transfer?: 
 export type Account = { id: string; name: string; identity: string; root_id: string; status: string; error: string; verification_url: string; quota_limit: number; quota_used: number }
 export type Job = { id: string; account_id: string; kind: string; title: string; state: string; progress: number; message: string; attempts: number; next_run: number; created: number }
 export type Entry = { id: string; path: string; name: string; kind: string; size: number; hash: string }
+export type MediaData = {file:FileNode;options:{id:string;label:string;url:string}[];proxy_default:boolean}
 export type Source = { id: string; kind: string; link: string; share_id: string; selected: string[]; manifest: Entry[] }
 export type FilesResult = { transferring?: number; files: FileNode[]; total: number; page: number; limit: number; breadcrumbs: {id: string; name: string}[] }
 export type Summary = { count: number; folders: number; bytes: number; missing: number; tasks: number; active_account: string; last_scan: string; version: string }

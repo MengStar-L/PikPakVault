@@ -29,7 +29,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 | 📨 TelDrive 同步 | 监控指定文件夹，手动 / 定时上传至当前 PikPak 账号；保留层级、跳过已保存文件、分片续传 |
 | ☁️ 云端账号 | 保存多个账号、切换活动账号；默认专用目录 `My Pack/PikPakVault`，设置中可自定义 |
 | ✨ 即时反馈 | 在当前文件夹创建传输任务，直接显示传输中的文件与进度；持久化任务、断线重连 |
-| 🎞️ 预览与播放 | 图片、文本、PDF、音视频；倍速、进度记忆、上游清晰度；可选文件夹视频封面 |
+| 🎞️ 预览与播放 | 图片、文本、PDF、音视频；倍速、进度记忆、上游清晰度；可选文件夹视频封面；一键使用 PotPlayer 播放 |
 | 🛟 手动恢复 | 扫描缺失、预览恢复范围，依次尝试回收站、哈希秒传与原始来源，重建当前目录 |
 | 📦 完整迁移 | 导出 / 导入全部数据库与配套密钥，包括账号认证、分享提取码、收藏、播放记录、任务和日志 |
 | 🔄 程序更新 | 检查 GitHub 正式 Release，确认后校验、备份、安装与重启；失败自动回滚 |
@@ -43,7 +43,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 从 [Releases](https://github.com/MengStar-L/PikPakVault/releases/latest) 下载对应架构安装包与 `SHA256SUMS`，也可以执行：
 
 ```bash
-version=0.3.4
+version=0.3.5
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -83,6 +83,14 @@ curl -fsS http://127.0.0.1:5675/healthz
 
 公网长期使用可参考 [Caddy 示例](deploy/Caddyfile.example) 配置 HTTPS，将 `VAULT_SECURE_COOKIES=true` 写入环境文件后重启服务。只通过 SSH 隧道访问时，可改为监听 `127.0.0.1:5675`。
 
+## 使用 PotPlayer 播放
+
+视频预览工具栏、视频右键菜单和“更多操作”中均可点击 **使用 PotPlayer 播放**。程序获取新的 PikPak 播放直链后，通过 `potplayer://` 唤起本机播放器；预览页会使用当前选择的清晰度，并暂停网页播放。无需下载整个文件或在播放器中登录资源库。
+
+本机需安装 Windows 版 PotPlayer，并注册 `potplayer://` 协议。首次打开时，在浏览器提示中允许打开 PotPlayer；若未启动，可点击提示中的“再次打开”。便携版没有注册协议时，需要先使用其安装程序或协议关联工具配置。浏览器无法替你跳过首次授权，也无法确认播放器是否已启动。
+
+PotPlayer 直接连接 PikPak，不使用需要网页登录态的服务器中转地址。地址过期后重新点击按钮即可获取新地址；PotPlayer 内的播放进度暂不回传网页。
+
 ## 分享保存与重试
 
 分享转存直接保存到你选择的目录，不以 `Pack From Shared` 作为中转目录。程序核对上游返回的目标位置、任务结果映射与文件清单；位置不符时显示原因并暂停处理。
@@ -111,7 +119,7 @@ curl -fsS http://127.0.0.1:5675/healthz
 sudo journalctl -u pikpak-vault-update -n 60 --no-pager
 sudo cat /var/lib/pikpak-vault-updater/status.json
 # 将版本号替换为实际新版本
-sudo bash deploy/update.sh v0.3.4
+sudo bash deploy/update.sh v0.3.5
 ```
 
 更新源默认是本仓库的公开 Releases，可在 root 管理的环境配置中设置 `VAULT_UPDATE_REPOSITORY=owner/repository`。Windows 和 Docker 支持检查与下载链接；网页自动安装仅用于上述 systemd 安装方式。Docker 更新请重新构建镜像并保留数据卷。
@@ -159,7 +167,7 @@ go test ./...
 go run ./cmd/vault serve --data ./data --listen 127.0.0.1:5675
 
 # Linux 双架构发布包
-bash scripts/build.sh 0.3.4
+bash scripts/build.sh 0.3.5
 ```
 
 前端 React 19 + TypeScript + Vite + Tailwind / Radix / Motion，后端 Go `net/http` + SQLite。前端产物嵌入可执行文件。开发热更新使用 `npm run dev --prefix web`。Docker 可执行 `docker compose up -d --build`。

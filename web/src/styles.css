@@ -201,3 +201,10 @@
  .file-card:hover .folder-preview,.file-card.opening .folder-preview{transform:none}
  .file-card:hover .folder-preview-frame{transform:translateY(calc(var(--preview-index)*-5px)) rotate(calc(var(--preview-index)*-4deg + 3deg))}
 }
+
+/* External playback stays alongside quality and download controls. */
+.media-toolbar,.media-tools{flex-wrap:wrap}
+.media-tools{min-width:0}
+.media-tools .potplayer-button{gap:6px;padding:7px 10px;font-size:11px;white-space:nowrap;min-height:32px}
+.dropdown-content [data-disabled]{opacity:.45;cursor:not-allowed}
+@media(max-width:640px){.media-tools{width:100%;justify-content:flex-end}.media-tools .potplayer-button{margin-right:auto;padding:6px 8px;font-size:10px}}

@@ -12,7 +12,7 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /src/web/dist ./web/dist
 ARG TARGETARCH
-ARG VERSION=0.3.4
+ARG VERSION=0.3.5
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags="-s -w -X pikpakvault/internal/vault.Version=${VERSION}" -o /vault ./cmd/vault
 
 FROM alpine:3.23
