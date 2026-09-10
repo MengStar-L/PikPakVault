@@ -247,7 +247,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	})
 }
 
-var Version = "0.3.3"
+var Version = "0.3.4"
 
 func (a *App) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1075,6 +1075,15 @@ func (a *App) jobAction(w http.ResponseWriter, r *http.Request) error {
 		if j.AccountID != a.active() && j.Kind != "verify" {
 			return fail(409, "Switch to this task's account first")
 		}
+		if j.Kind != "verify" {
+			account, err := a.Store.Account(j.AccountID)
+			if err != nil {
+				return err
+			}
+			if account.Status != "ready" {
+				return fail(409, "该账号尚未就绪，请在账号管理中完成验证后重试")
+			}
+		}
 		if (j.State == "cancelled" || j.State == "completed") && (j.Kind == "teldrive_upload" || j.Kind == "recover" || (j.Kind == "sync" && d.MonitorID != "")) {
 			operations, err := nodeJobs(a.Store.DB, j.AccountID)
 			if err != nil {
@@ -1091,10 +1100,16 @@ func (a *App) jobAction(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		j.State = "queued"
-		j.Message = ""
+		j.Message = "已收到重试请求，等待继续原任务"
+		if j.Kind == "import" {
+			j.Message = "已收到重试请求，将重新核对云端保存结果"
+		}
 		j.Attempts = 0
 		j.NextRun = 0
 		d.Problems = map[string]string{}
+		for _, transfer := range d.Transfers {
+			transfer.Polls = 0
+		}
 	case "associate":
 		if j.AccountID != a.active() {
 			return fail(409, "请先切换到该任务所属账号")

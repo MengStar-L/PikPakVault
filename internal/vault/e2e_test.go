@@ -108,6 +108,45 @@ func TestServeE2E(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {ct}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
 	})}
 	h := http.NewServeMux()
+	h.HandleFunc("POST /__fixture/share-retry", func(w http.ResponseWriter, r *http.Request) {
+		a.jobMu.Lock()
+		defer a.jobMu.Unlock()
+		mu.Lock()
+		defer mu.Unlock()
+		parent, sourceID := ID(), ID()
+		add(parent, "root", "分享重试验收", "folder", "", 0, false)
+		name := "已保存但未登记的分享"
+		manifest := []Entry{{ID: "publisher-folder", Name: name, Path: name, Kind: "folder"}, {ID: "publisher-video", Name: "sample.mp4", Path: name + "/sample.mp4", Kind: "file", Size: 23, Hash: "share-hash"}}
+		secret, _ := a.Store.Seal("")
+		a.Store.SaveSource(Source{ID: sourceID, Kind: "share", Link: "https://mypikpak.com/s/test-share", ShareID: "test-share", Secret: secret, Manifest: manifest})
+		for _, entry := range manifest {
+			id := f.newID()
+			remoteParent := "r-" + parent
+			kind := "drive#folder"
+			if entry.Kind == "file" {
+				kind = "drive#file"
+				remoteParent = f.files["retry-root-"+sourceID].ID
+			}
+			remote := pikpak.File{ID: id, ParentID: remoteParent, Name: entry.Name, Kind: kind, Size: pikpak.Number(entry.Size), Hash: entry.Hash, Phase: "PHASE_TYPE_COMPLETE"}
+			f.files[id] = remote
+			if entry.Kind == "folder" {
+				f.files["retry-root-"+sourceID] = remote
+			}
+		}
+		delete(f.files, "retry-root-"+sourceID)
+		j, err := a.Store.NewJob("a", "import", "保存分享 · "+name, JobData{SourceID: sourceID, ParentID: parent, Transfers: map[string]*TransferState{sourceID: {Mode: "direct", TargetID: "r-" + parent, Phase: "submitted", Started: now() - 500, Expected: manifest}}})
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		j.State = "attention"
+		j.Message = "PikPak 未返回保存结果 ID，请重试核对"
+		if err = a.Store.SaveJob(&j, nil); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"job_id": j.ID, "parent_id": parent})
+	})
 	td := telDriveFixture(t)
 	h.HandleFunc("POST /__fixture/teldrive-saved", func(w http.ResponseWriter, r *http.Request) {
 		a.jobMu.Lock()

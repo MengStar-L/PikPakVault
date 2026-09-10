@@ -127,24 +127,27 @@ type RemoteEntry struct {
 	Path string      `json:"path"`
 }
 type TransferState struct {
-	Mode            string        `json:"mode,omitempty"`
-	TargetID        string        `json:"target_id,omitempty"`
-	BeforeIDs       []string      `json:"before_ids,omitempty"`
-	BeforeTasks     []string      `json:"before_tasks,omitempty"`
-	Expected        []Entry       `json:"expected,omitempty"`
-	Display         []Entry       `json:"display,omitempty"` // UI only; never used to verify or recover content.
-	Polls           int           `json:"polls,omitempty"`
-	Fingerprint     string        `json:"fingerprint,omitempty"`
-	StableSince     int64         `json:"stable_since,omitempty"`
-	VerifiedByFiles bool          `json:"verified_by_files,omitempty"`
-	StageParent     string        `json:"stage_parent,omitempty"`
-	StageName       string        `json:"stage_name,omitempty"`
-	StageID         string        `json:"stage_id"`
-	Phase           string        `json:"phase"`
-	TaskID          string        `json:"task_id"`
-	OutputIDs       []string      `json:"output_ids"`
-	Entries         []RemoteEntry `json:"entries"`
-	Started         int64         `json:"started"`
+	Mode            string          `json:"mode,omitempty"`
+	TargetID        string          `json:"target_id,omitempty"`
+	BeforeIDs       []string        `json:"before_ids,omitempty"`
+	BeforeTasks     []string        `json:"before_tasks,omitempty"`
+	StrictTarget    bool            `json:"strict_target,omitempty"`
+	ShareParentID   string          `json:"share_parent_id,omitempty"`
+	ShareTrace      json.RawMessage `json:"share_trace,omitempty"`
+	Expected        []Entry         `json:"expected,omitempty"`
+	Display         []Entry         `json:"display,omitempty"` // UI only; never used to verify or recover content.
+	Polls           int             `json:"polls,omitempty"`
+	Fingerprint     string          `json:"fingerprint,omitempty"`
+	StableSince     int64           `json:"stable_since,omitempty"`
+	VerifiedByFiles bool            `json:"verified_by_files,omitempty"`
+	StageParent     string          `json:"stage_parent,omitempty"`
+	StageName       string          `json:"stage_name,omitempty"`
+	StageID         string          `json:"stage_id"`
+	Phase           string          `json:"phase"`
+	TaskID          string          `json:"task_id"`
+	OutputIDs       []string        `json:"output_ids"`
+	Entries         []RemoteEntry   `json:"entries"`
+	Started         int64           `json:"started"`
 }
 type JobData struct {
 	MonitorID      string                     `json:"monitor_id,omitempty"`

@@ -43,7 +43,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 从 [Releases](https://github.com/MengStar-L/PikPakVault/releases/latest) 下载对应架构安装包与 `SHA256SUMS`，也可以执行：
 
 ```bash
-version=0.3.3
+version=0.3.4
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -83,6 +83,12 @@ curl -fsS http://127.0.0.1:5675/healthz
 
 公网长期使用可参考 [Caddy 示例](deploy/Caddyfile.example) 配置 HTTPS，将 `VAULT_SECURE_COOKIES=true` 写入环境文件后重启服务。只通过 SSH 隧道访问时，可改为监听 `127.0.0.1:5675`。
 
+## 分享保存与重试
+
+分享转存直接保存到你选择的目录，不以 `Pack From Shared` 作为中转目录。程序核对上游返回的目标位置、任务结果映射与文件清单；位置不符时显示原因并暂停处理。
+
+如果任务显示失败或需要处理，点击“重试”会继续原任务并显示核对进度。云端已保存但响应丢失时，会重新检查原目标目录，不盲目重复转存。无法唯一匹配的结果可在任务详情中关联；旧版本落到其他目录的结果需先核对归属，再修正到原目标位置。
+
 ## TelDrive 文件夹同步
 
 进入侧栏 **TelDrive 同步**，填写站点地址和 access_token，浏览选择来源目录与保存位置。默认仅手动，也可开启定时同步。程序自动下载并管理独立的 aria2，先把文件下载到程序目录下的缓存，再上传至 PikPak。支持断线续传、暂停和重启续跑；保存成功后自动清理，失败时保留缓存供重试。无需安装系统 aria2 或配置外部 RPC。
@@ -105,7 +111,7 @@ curl -fsS http://127.0.0.1:5675/healthz
 sudo journalctl -u pikpak-vault-update -n 60 --no-pager
 sudo cat /var/lib/pikpak-vault-updater/status.json
 # 将版本号替换为实际新版本
-sudo bash deploy/update.sh v0.3.3
+sudo bash deploy/update.sh v0.3.4
 ```
 
 更新源默认是本仓库的公开 Releases，可在 root 管理的环境配置中设置 `VAULT_UPDATE_REPOSITORY=owner/repository`。Windows 和 Docker 支持检查与下载链接；网页自动安装仅用于上述 systemd 安装方式。Docker 更新请重新构建镜像并保留数据卷。
@@ -153,7 +159,7 @@ go test ./...
 go run ./cmd/vault serve --data ./data --listen 127.0.0.1:5675
 
 # Linux 双架构发布包
-bash scripts/build.sh 0.3.3
+bash scripts/build.sh 0.3.4
 ```
 
 前端 React 19 + TypeScript + Vite + Tailwind / Radix / Motion，后端 Go `net/http` + SQLite。前端产物嵌入可执行文件。开发热更新使用 `npm run dev --prefix web`。Docker 可执行 `docker compose up -d --build`。

@@ -87,7 +87,7 @@ func TestDirectImportHasNoStagingMovesOrRenames(t *testing.T) {
 		t.Fatal("missing durable destination")
 	}
 }
-func TestShareOutsideTargetMovesOnlyOnce(t *testing.T) {
+func TestLegacyShareAssociationMovesOnlyOnce(t *testing.T) {
 	a, f := testApp(t)
 	f.outputs = sampleOutputs()
 	for i, r := range f.outputs {
@@ -104,8 +104,13 @@ func TestShareOutsideTargetMovesOnlyOnce(t *testing.T) {
 	}
 	f.shareOutside, f.shareResponseIDs = true, true
 	j := createImport(t, a, "share")
+	root, _ := a.ensureRoot(context.Background(), f, "a")
+	result, _ := f.RestoreShare(context.Background(), "share", "pass-token", []string{"a"}, root)
+	d := loadJobData(t, j)
+	d.Transfers[d.SourceID] = &TransferState{Mode: "direct", TargetID: root, Phase: "submitted", Expected: f.shareEntries, OutputIDs: []string{result.Files[0].ID}, Started: now() - 500}
+	a.Store.SaveJob(&j, &d)
 	requireComplete(t, execute(t, a, &j))
-	if f.calls["move"] != 1 {
+	if f.calls["move"] != 1 || f.calls["share_restore"] != 1 {
 		t.Fatalf("double movement: %v", f.calls)
 	}
 }

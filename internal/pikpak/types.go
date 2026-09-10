@@ -56,14 +56,17 @@ type Page struct {
 	Next  string `json:"next_page_token"`
 }
 type Task struct {
-	ID       string `json:"id"`
-	FileID   string `json:"file_id"`
-	Phase    string `json:"phase"`
-	Progress int    `json:"progress"`
-	Message  string `json:"message"`
-	Params   struct {
-		URL string `json:"url"`
-	} `json:"params"`
+	ID       string     `json:"id"`
+	FileID   string     `json:"file_id"`
+	Phase    string     `json:"phase"`
+	Progress int        `json:"progress"`
+	Message  string     `json:"message"`
+	Params   TaskParams `json:"params"`
+}
+type TaskParams struct {
+	URL          string          `json:"url"`
+	TraceFileIDs json.RawMessage `json:"trace_file_ids,omitempty"`
+	ErrorDetail  string          `json:"error_detail,omitempty"`
 }
 type Transfer struct {
 	File    *File    `json:"file"`
@@ -71,6 +74,15 @@ type Transfer struct {
 	Files   []File   `json:"files"`
 	FileIDs []string `json:"file_ids"`
 	TaskID  string   `json:"task_id"`
+	// Share restore file_id identifies the destination folder, never an output.
+	RestoreParentID string     `json:"file_id,omitempty"`
+	RestoreTaskID   string     `json:"restore_task_id,omitempty"`
+	RestoreStatus   string     `json:"restore_status,omitempty"`
+	Params          TaskParams `json:"params"`
+}
+
+type TaskReader interface {
+	Task(context.Context, string) (Task, error)
 }
 type Share struct {
 	Page

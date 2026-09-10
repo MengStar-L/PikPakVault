@@ -262,6 +262,63 @@ test('imports remain in the chosen folder with durable live progress and no dupl
   expect(errors).toEqual([])
 })
 
+test('share retry reconciles saved files without SSE and shows immediate feedback',async({page})=>{
+  await login(page)
+  const setup=await page.request.post('/__fixture/share-retry')
+  const {job_id,parent_id}=await setup.json()
+  await page.route('**/api/v1/events',route=>route.abort())
+  await page.route(`**/api/v1/jobs/${job_id}/retry`,async route=>{
+    await new Promise(resolve=>setTimeout(resolve,500))
+    await route.continue()
+  })
+  await page.goto(`/files?folder=${parent_id}`)
+  const card=page.locator(`[data-testid=transfer-card][data-job-id="${job_id}"]`)
+  await expect(card).toContainText('需要处理')
+  await card.getByRole('button',{name:'重试',exact:true}).click()
+  await expect(card).toContainText('正在重试')
+  await expect(card.getByRole('button',{name:'重试',exact:true})).toBeDisabled()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(card).toHaveCount(0,{timeout:20000})
+  await expect(page.locator('.file-card')).toHaveCount(1)
+  await expect(page.locator('.file-title')).toHaveText('已保存但未登记的分享')
+  await expect(page).toHaveURL(new RegExp(`folder=${parent_id}`))
+  const detail=await (await page.request.get(`/api/v1/jobs/${job_id}`)).json()
+  expect(detail.job.state).toBe('completed')
+  expect(detail.job.message).toContain('未重复转存')
+})
+
+test('retry that remains blocked reports its reason and is available in task details',async({page})=>{
+  await login(page)
+  const {job_id,parent_id}=await (await page.request.post('/__fixture/share-retry')).json()
+  const original=await (await page.request.get(`/api/v1/jobs/${job_id}`)).json()
+  const reason='找到多份同名结果，请在任务详情中核对归属'
+  await page.route('**/api/v1/events',route=>route.abort())
+  await page.route(`**/api/v1/jobs/${job_id}`,route=>route.fulfill({json:{...original,job:{...original.job,message:reason}}}))
+  let retries=0
+  await page.route(`**/api/v1/jobs/${job_id}/retry`,async route=>{
+    retries++
+    await new Promise(resolve=>setTimeout(resolve,350))
+    await route.fulfill({json:{...original.job,state:'queued',message:'正在核对原任务'}})
+  })
+  await page.goto(`/files?folder=${parent_id}`)
+  const card=page.locator(`[data-testid=transfer-card][data-job-id="${job_id}"]`)
+  await card.getByRole('button',{name:'重试',exact:true}).click()
+  await expect(page.locator('[data-sonner-toast]').filter({hasText:reason})).toBeVisible()
+  expect(retries).toBe(1)
+  await card.click()
+  const dialog=page.getByRole('dialog')
+  await expect(dialog).toContainText(reason)
+  await dialog.getByRole('button',{name:'重试原任务',exact:true}).click()
+  await expect(dialog.getByRole('button',{name:'正在重试',exact:true})).toBeDisabled()
+  await expect(dialog.getByRole('button',{name:'重试原任务',exact:true})).toBeEnabled()
+  expect(retries).toBe(2)
+  for(const width of [1440,390]){
+    await page.setViewportSize({width,height:900})
+    await noOverflow(page)
+    await page.screenshot({path:`../artifacts/retry-detail-${width}.png`,animations:'disabled'})
+  }
+})
+
 test('breadcrumbs fit available space, expand again and keep every ancestor navigable',async({page})=>{
   await login(page)
   const paths:Record<string,string[]>={short:['Hero','VR'],deep:['资料库','个人收藏','影像世界','全景影像','精选合集','旅行记录','2026年','VR'],long:['Hero','这是一个特别长的当前文件夹名称'.repeat(12)]}

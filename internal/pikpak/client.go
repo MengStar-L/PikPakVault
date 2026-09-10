@@ -408,7 +408,16 @@ func (c *Client) Share(ctx context.Context, id, pass, token, parent, page string
 }
 func (c *Client) RestoreShare(ctx context.Context, id, token string, ids []string, parent string) (Transfer, error) {
 	var r Transfer
-	e := c.drive(ctx, "POST", "/drive/v1/share/restore", nil, map[string]any{"share_id": id, "pass_code_token": token, "file_ids": ids, "parent_id": parent}, &r)
+	e := c.drive(ctx, "POST", "/drive/v1/share/restore", nil, map[string]any{
+		"share_id": id, "pass_code_token": token, "file_ids": ids,
+		"parent_id": parent, "specify_parent_id": true, "ancestor_ids": []string{},
+		"params": map[string]string{"trace_file_ids": strings.Join(ids, ",")},
+	}, &r)
+	return r, e
+}
+func (c *Client) Task(ctx context.Context, id string) (Task, error) {
+	var r Task
+	e := c.drive(ctx, "GET", "/drive/v1/tasks/"+url.PathEscape(id), nil, nil, &r)
 	return r, e
 }
 func (c *Client) Instant(ctx context.Context, parent string, f File) (Transfer, error) {

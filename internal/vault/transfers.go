@@ -103,6 +103,7 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 				}
 			}
 		}
+		t.StrictTarget = s.Kind == "share"
 		t.Phase, t.Started = "dispatching", now()
 		if err := a.checkpoint(j, d); err != nil {
 			return nil, err
@@ -123,10 +124,23 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 		}
 		if result.Task != nil {
 			t.TaskID = result.Task.ID
-			t.addOutput(result.Task.FileID)
+			if s.Kind != "share" {
+				t.addOutput(result.Task.FileID)
+			} else {
+				t.ShareTrace = result.Task.Params.TraceFileIDs
+			}
 		}
 		if result.TaskID != "" {
 			t.TaskID = result.TaskID
+		}
+		if s.Kind == "share" {
+			if result.RestoreTaskID != "" {
+				t.TaskID = result.RestoreTaskID
+			}
+			t.ShareParentID = result.RestoreParentID
+			if len(result.Params.TraceFileIDs) > 0 {
+				t.ShareTrace = result.Params.TraceFileIDs
+			}
 		}
 		if result.File != nil {
 			t.addOutput(result.File.ID)
@@ -145,10 +159,18 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 		}
 	}
 
+	if s.Kind == "share" {
+		if t.StrictTarget && t.ShareParentID != "" && t.ShareParentID != parent {
+			return nil, block("PikPak 返回的保存位置与指定目录不一致，已暂停；不会重复转存或自动中转，请核对原任务结果")
+		}
+		if err := t.collectShareTrace(); err != nil && t.TaskID == "" {
+			return nil, err
+		}
+	}
 	taskPending, taskFailed := false, false
 	var taskErr error
 	if t.TaskID != "" || (s.Kind == "magnet" && t.Mode == "direct" && len(t.OutputIDs) == 0) {
-		tasks, err := c.Tasks(ctx)
+		tasks, err := transferTasks(ctx, c, s.Kind, t.TaskID)
 		if err != nil {
 			// A task-list outage is not evidence that the saved file is unavailable.
 			if !pikpak.Temporary(err) || len(t.OutputIDs) == 0 {
@@ -183,7 +205,16 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 					continue
 				}
 				found = true
-				t.addOutput(task.FileID) // collect IDs even when upstream progress is stuck
+				if s.Kind == "share" {
+					if len(task.Params.TraceFileIDs) > 0 {
+						t.ShareTrace = task.Params.TraceFileIDs
+					}
+					if err := t.collectShareTrace(); err != nil {
+						return nil, err
+					}
+				} else {
+					t.addOutput(task.FileID)
+				} // collect IDs even when progress is stuck
 				taskPending = task.Phase != "PHASE_TYPE_COMPLETE"
 				taskFailed = task.Phase == "PHASE_TYPE_ERROR"
 				j.Progress = max(j.Progress, min(task.Progress, 95))
@@ -191,6 +222,25 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 			if t.TaskID != "" && !found {
 				taskPending = true
 			}
+		}
+	}
+	if s.Kind == "share" && t.StageID == "" && len(t.OutputIDs) == 0 {
+		if taskFailed {
+			return nil, block("PikPak 分享转存任务失败，尚无可核验的保存结果，请检查来源及账号空间")
+		}
+		j.Message = "正在重新核对目标目录与分享清单"
+		if err := a.checkpoint(j, d); err != nil {
+			return nil, err
+		}
+		ids, err := a.reconcileShareResults(ctx, c, j, t)
+		if err != nil {
+			return nil, err
+		}
+		t.OutputIDs = ids
+		t.Phase = "submitted"
+		d.Note = "已核对目标目录与分享清单，登记已保存的文件；未重复转存"
+		if err := a.checkpoint(j, d); err != nil {
+			return nil, err
 		}
 	}
 	files := []pikpak.File{}
@@ -245,7 +295,18 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 		if now()-t.Started < 120 {
 			return nil, t.wait("等待可确认归属的转存结果；不会重复提交")
 		}
-		return nil, block("PikPak returned no attributable saved files. Associate the saved result IDs in task details; the request will not be repeated automatically.")
+		return nil, block("PikPak 未返回可确认归属的保存结果。重试会重新核对；若云端已保存，请在任务详情中关联结果文件")
+	}
+	if t.StrictTarget {
+		outputs := map[string]bool{}
+		for _, f := range files {
+			outputs[f.ID] = true
+		}
+		for _, f := range files {
+			if !outputs[f.ParentID] && f.ParentID != parent {
+				return nil, block("分享结果未保存在指定目录，已暂停；不会自动中转或重复转存")
+			}
+		}
 	}
 	entries, err := transferTree(ctx, c, files)
 	if err != nil {

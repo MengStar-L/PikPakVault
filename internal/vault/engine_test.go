@@ -634,7 +634,7 @@ func TestSameNameConflictNeverOverwrites(t *testing.T) {
 		t.Fatal("overwrote unrelated item")
 	}
 }
-func TestShareOutsideRootRequiresAttribution(t *testing.T) {
+func TestShareOutsideDestinationStopsWithoutMoving(t *testing.T) {
 	for _, identified := range []bool{false, true} {
 		t.Run(fmt.Sprint(identified), func(t *testing.T) {
 			a, f := testApp(t)
@@ -644,19 +644,8 @@ func TestShareOutsideRootRequiresAttribution(t *testing.T) {
 			f.shareResponseIDs = identified
 			j := createImport(t, a, "share")
 			result := execute(t, a, &j)
-			if identified {
-				requireComplete(t, result)
-			} else {
-				if result.State != "waiting" {
-					t.Fatal(result.State, result.Message)
-				}
-				if f.calls["move"] != 0 {
-					t.Fatal("moved unproven output")
-				}
-				result = execute(t, a, &j)
-				if f.calls["share_restore"] != 1 {
-					t.Fatal("repeated ambiguous share transfer")
-				}
+			if result.State == "completed" || f.calls["share_restore"] != 1 || f.calls["move"] != 0 {
+				t.Fatal("wrong destination must stop without a fallback move", result.State, f.calls)
 			}
 		})
 	}
