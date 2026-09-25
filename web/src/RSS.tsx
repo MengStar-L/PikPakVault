@@ -85,6 +85,7 @@ function SubscriptionDialog({ subscription, onClose }: { subscription: RSSSubscr
   const [target, setTarget] = useState(subscription?.parent_id || 'root')
   const [targetName, setTargetName] = useState(subscription?.target_path || '我的文件')
   const [picker, setPicker] = useState(false)
+  const [folderEditing, setFolderEditing] = useState(false)
   const [minutes, setMinutes] = useState(subscription?.interval_minutes || 30)
   const [enabled, setEnabled] = useState(subscription?.enabled ?? true)
   const [existing, setExisting] = useState(subscription?.import_existing || false)
@@ -93,7 +94,7 @@ function SubscriptionDialog({ subscription, onClose }: { subscription: RSSSubscr
   const [error, setError] = useState('')
   async function save(e: React.FormEvent) {
     e.preventDefault()
-    if (submitting.current) return
+    if (submitting.current || folderEditing) return
     submitting.current = true; setBusy(true); setError('')
     try {
       await api(subscription ? `/rss/${subscription.id}` : '/rss', { name: name.trim(), url: url.trim(), parent_id: target, interval_minutes: minutes, enabled, import_existing: existing }, subscription ? 'PATCH' : 'POST')
@@ -107,11 +108,11 @@ function SubscriptionDialog({ subscription, onClose }: { subscription: RSSSubscr
     <form className="rss-form" onSubmit={save}><div className="modal-body rss-editor">
       <label>订阅名称<input value={name} onChange={e => setName(e.target.value)} placeholder="例如：每周电影更新" maxLength={200} required autoFocus/></label>
       <label>RSS / Atom 地址<input type="url" value={url} onChange={e => setURL(e.target.value)} placeholder="https://example.com/feed.xml" required readOnly={!!subscription} autoComplete="off" spellCheck={false}/><small>{subscription ? '订阅地址与历史记录关联，如需更换地址请添加新订阅。' : '填写订阅源地址，条目中需包含磁链、PikPak 分享链接或公开可下载附件。'}</small></label>
-      <div className="destination-section"><div className="destination-row"><span><Folder size={18}/>保存到</span><button type="button" aria-expanded={picker} aria-controls="rss-folder-picker" onClick={() => setPicker(v => !v)}><span className="destination-path" title={targetName}>{targetName}</span><span className="destination-toggle">{picker ? '收起' : '更改'}<motion.span animate={{ rotate: picker ? 180 : 0 }} transition={{ duration: reduce ? 0 : .22 }}><ChevronDown size={15}/></motion.span></span></button></div><AnimatePresence initial={false}>{picker && <FolderPickerPanel id="rss-folder-picker"><FolderPicker value={target} onChange={(id, _name, path) => { setTarget(id); setTargetName(path) }}/></FolderPickerPanel>}</AnimatePresence>{subscription && <p className="rss-field-note">更换位置只影响之后发现的资源，已有文件不会被移动。</p>}</div>
+      <div className="destination-section"><div className="destination-row"><span><Folder size={18}/>保存到</span><button type="button" aria-expanded={picker} aria-controls="rss-folder-picker" disabled={folderEditing} onClick={() => setPicker(v => !v)}><span className="destination-path" title={targetName}>{targetName}</span><span className="destination-toggle">{picker ? '收起' : '更改'}<motion.span animate={{ rotate: picker ? 180 : 0 }} transition={{ duration: reduce ? 0 : .22 }}><ChevronDown size={15}/></motion.span></span></button></div><AnimatePresence initial={false}>{picker && <FolderPickerPanel id="rss-folder-picker"><FolderPicker value={target} onBusyChange={setFolderEditing} onChange={(id, _name, path) => { setTarget(id); setTargetName(path) }}/></FolderPickerPanel>}</AnimatePresence>{subscription && <p className="rss-field-note">更换位置只影响之后发现的资源，已有文件不会被移动。</p>}</div>
       <label>检查频率<select aria-label="检查频率" value={minutes} onChange={e => setMinutes(Number(e.target.value))}>{[...new Set([5, 15, 30, 60, 180, 360, 1440, 10080, minutes])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{interval(value)}</option>)}</select></label>
       <label className="rss-option"><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)}/><span><strong>自动检查并保存新资源</strong><small>关闭后仍可点击“立即检查”。</small></span></label>
       {!subscription && <label className="rss-option"><input type="checkbox" checked={existing} onChange={e => setExisting(e.target.checked)}/><span><strong>同时保存订阅中现有的资源</strong><small>默认仅记录首次成功检查时的条目，从下一次更新开始保存。</small></span></label>}
-    </div>{error && <div className="rss-form-error inline-error" role="alert">{error}</div>}<div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={busy || !name.trim() || !url.trim()}>{busy ? <LoaderCircle className="spin" size={16}/> : <Check size={16}/>}保存订阅</button></div></form>
+    </div>{error && <div className="rss-form-error inline-error" role="alert">{error}</div>}<div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={busy || folderEditing || !name.trim() || !url.trim()}>{busy ? <LoaderCircle className="spin" size={16}/> : <Check size={16}/>}保存订阅</button></div></form>
   </Modal>
 }
 

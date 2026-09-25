@@ -65,6 +65,9 @@ test('picker selects on navigation and only explicit save submits the chosen des
   const submitted = await captureImports(page)
   await openImport(page)
   await expect(page.locator('.folder-picker').getByRole('button', { name: '选择当前文件夹' })).toHaveCount(0)
+  await expect(page.locator('.folder-picker .picker-current')).toHaveCount(0)
+  await expect(page.locator('.folder-picker').getByRole('button', { name: '新建文件夹', exact: true })).toBeVisible()
+  await expect(page.locator('.folder-picker').getByRole('button', { name: '当前文件夹操作', exact: true })).toHaveCount(0)
   await choose(page, 'picker-movies')
   await choose(page, 'picker-season')
   await choose(page, 'picker-empty')
@@ -214,6 +217,7 @@ test('deep paths stay usable on desktop and mobile with reduced motion', async (
   for (const width of [1440, 768, 390, 360]) {
     await page.setViewportSize({ width, height: 844 })
     await expectDestination(page, 'picker-empty')
+    await expect(page.locator('.picker-crumb').getByRole('button', { name: byID('picker-empty').name, exact: true })).toBeInViewport()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     for (const selector of ['[role=dialog]', '.destination-row', '.folder-picker']) {
       expect(await page.locator(selector).evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)

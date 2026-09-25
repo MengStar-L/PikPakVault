@@ -14,7 +14,7 @@ export function Modal({ open, onClose, title, subtitle, children, wide = false, 
   const exit=reduce?{opacity:0}:drawer?{x:32,opacity:0}:{y:8,opacity:0,scale:.98};
   return <Dialog.Root open={open} onOpenChange={v=>!v&&onClose()}><AnimatePresence>{open&&<Dialog.Portal forceMount>
     <Dialog.Overlay forceMount asChild><motion.div className="modal-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:reduce?.08:.2}}/></Dialog.Overlay>
-    <Dialog.Content forceMount asChild aria-describedby={undefined}><motion.div className={`modal ${wide?'wide':''} ${drawer?'drawer':''} ${className}`} initial={initial} animate={{x:0,y:0,opacity:1,scale:1}} exit={{...exit,transition:{duration:reduce?.08:.16}}} transition={{duration:reduce?.08:drawer?.34:.28,ease:[.16,1,.3,1]}}>
+    <Dialog.Content forceMount asChild aria-describedby={undefined} onEscapeKeyDown={event=>{if(event.target instanceof Element && event.target.closest('[data-modal-escape-boundary]'))event.preventDefault()}}><motion.div className={`modal ${wide?'wide':''} ${drawer?'drawer':''} ${className}`} initial={initial} animate={{x:0,y:0,opacity:1,scale:1}} exit={{...exit,transition:{duration:reduce?.08:.16}}} transition={{duration:reduce?.08:drawer?.34:.28,ease:[.16,1,.3,1]}}>
       <div className="modal-head"><div><Dialog.Title>{title}</Dialog.Title>{subtitle&&<Dialog.Description>{subtitle}</Dialog.Description>}</div><Dialog.Close asChild><button className="icon-button" aria-label="关闭"><X size={19}/></button></Dialog.Close></div>{children}
     </motion.div></Dialog.Content>
   </Dialog.Portal>}</AnimatePresence></Dialog.Root>

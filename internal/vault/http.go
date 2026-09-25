@@ -253,7 +253,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	})
 }
 
-var Version = "0.3.7"
+var Version = "0.3.8"
 
 func (a *App) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -698,16 +698,31 @@ func (a *App) folderCreate(w http.ResponseWriter, r *http.Request) error {
 	if v.ParentID == "" {
 		v.ParentID = "root"
 	}
-	if e := a.target(v.ParentID); e != nil {
-		return e
-	}
 	tx, e := a.Store.DB.Begin()
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback()
+	// Validate in the same transaction as insertion: the picker may hold a stale
+	// path after this folder or one of its ancestors was moved to the recycle bin.
+	var parentKind string
+	if e = tx.QueryRow(`SELECT kind FROM nodes WHERE id=?`, v.ParentID).Scan(&parentKind); e != nil {
+		return e
+	}
+	if parentKind != "folder" {
+		return fail(400, "目标不是文件夹，请重新选择保存位置")
+	}
+	active, e := localNodeActive(tx, v.ParentID)
+	if e != nil {
+		return e
+	}
+	if !active {
+		return fail(409, "目标文件夹或上级目录已删除，请先还原或更换目录")
+	}
 	var count int
-	_ = tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE parent_id=? AND name=? AND trashed=0`, v.ParentID, v.Name).Scan(&count)
+	if e = tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE parent_id=? AND name=? AND trashed=0`, v.ParentID, v.Name).Scan(&count); e != nil {
+		return e
+	}
 	if count > 0 {
 		return fail(409, "A file or folder with this name already exists")
 	}

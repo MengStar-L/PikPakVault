@@ -60,6 +60,7 @@ function MonitorDialog({monitor,onClose}:{monitor:Monitor|null;onClose:()=>void}
   const [target,setTarget]=useState(monitor?.parent_id||'root')
   const [targetName,setTargetName]=useState(monitor?.target_path||'我的文件')
   const [targetOpen,setTargetOpen]=useState(false)
+  const [folderEditing,setFolderEditing]=useState(false)
   const [trail,setTrail]=useState<{id:string;name:string}[]>([])
   const [listing,setListing]=useState<RemotePage|null>(null)
   const [browsing,setBrowsing]=useState(false)
@@ -71,7 +72,7 @@ function MonitorDialog({monitor,onClose}:{monitor:Monitor|null;onClose:()=>void}
     catch(e) {setError((e as Error).message);setListing(null)} finally {setBrowsing(false)}
   }
   async function save() {
-    if(!source)return
+    if(!source||folderEditing||saving)return
     setSaving(true);setError('')
     try { await api(monitor?`/teldrive/${monitor.id}`:'/teldrive',{name,base_url:base,token,folder_id:source.id,folder_path:source.path,parent_id:target,auto_minutes:minutes},monitor?'PATCH':'POST');client.invalidateQueries({queryKey:['teldrive']});toast.success(minutes?'监控已保存，定时同步已开启':'监控已保存，可随时手动同步');onClose() }
     catch(e) {setError((e as Error).message)} finally {setSaving(false)}
@@ -90,12 +91,12 @@ function MonitorDialog({monitor,onClose}:{monitor:Monitor|null;onClose:()=>void}
         {listing.meta.totalPages>1&&<div className="pagination"><button disabled={browsing||listing.meta.currentPage<=1} onClick={()=>browse(trail,listing.meta.currentPage-1)}>上一页</button><span>{listing.meta.currentPage} / {listing.meta.totalPages}</span><button disabled={browsing||listing.meta.currentPage>=listing.meta.totalPages} onClick={()=>browse(trail,listing.meta.currentPage+1)}>下一页</button></div>}
       </div>}
       {source&&<div className="td-selection"><small>监控此目录及其全部子目录</small><strong><Folder size={17}/>{source.path||'/'}</strong></div>}
-      <div className="td-destination"><span>保存到资源库</span><button className="text-button" disabled={!!monitor} onClick={()=>setTargetOpen(!targetOpen)}><Folder size={16}/>{targetName}<ChevronRight size={15}/></button></div>
-      {targetOpen&&<FolderPicker value={target} onChange={(id,_label,path)=>{setTarget(id);setTargetName(path)}}/>}
+      <div className="td-destination"><span>保存到资源库</span><button className="text-button" disabled={!!monitor||folderEditing} onClick={()=>setTargetOpen(!targetOpen)}><Folder size={16}/>{targetName}<ChevronRight size={15}/></button></div>
+      {targetOpen&&<FolderPicker value={target} onBusyChange={setFolderEditing} onChange={(id,_label,path)=>{setTarget(id);setTargetName(path)}}/>}
       <label className="td-interval">同步方式<select aria-label="同步方式" value={minutes} onChange={e=>setMinutes(Number(e.target.value))}>{[...new Set([...intervals,minutes])].sort((a,b)=>a-b).map(v=><option key={v} value={v}>{intervalLabel(v)}</option>)}</select></label>
       <p className="td-editor-note">同步新增文件及当前账号缺少的副本，不覆盖已有内容。关闭定时同步不会取消已排队的任务，可以在传输任务中暂停或取消。来源和目标保存后固定；更换目录请新建监控。</p>
       {error&&<div className="inline-error" role="alert">{error}</div>}
     </div>
-    <div className="modal-actions"><button className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={saving||browsing||!source||!name.trim()||!base.trim()} onClick={save}>{saving?<LoaderCircle className="spin" size={16}/>:<Check size={16}/>}保存监控</button></div>
+    <div className="modal-actions"><button className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={saving||folderEditing||browsing||!source||!name.trim()||!base.trim()} onClick={save}>{saving?<LoaderCircle className="spin" size={16}/>:<Check size={16}/>}保存监控</button></div>
   </Modal>
 }

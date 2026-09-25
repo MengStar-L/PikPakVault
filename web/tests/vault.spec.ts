@@ -29,7 +29,7 @@ test('file create, rename, favorite, move and recycle flow', async ({ page }) =>
   await expect(page.locator('.file-title')).toHaveCount(1); await expect(page.locator('.file-title')).toHaveText(name + ' 已整理')
   await page.getByRole('button', { name: `${name} 已整理 的更多操作` }).click(); await page.getByRole('menuitem', { name: '收藏', exact: true }).click(); await expect(page.locator('.favorite-star')).toBeVisible()
   await page.getByRole('button', { name: `${name} 已整理 的更多操作` }).click(); await page.getByRole('menuitem', { name: '移动到…', exact: true }).click()
-  await page.locator('.picker-list').getByRole('button', { name: '电影时光' }).click(); await page.getByRole('button', { name: '移动到这里' }).click()
+  await page.locator('.picker-list').getByRole('button', { name: '电影时光', exact: true }).click(); await page.getByRole('button', { name: '移动到这里' }).click()
   await page.getByRole('button', { name: `${name} 已整理 的更多操作` }).click(); await page.getByRole('menuitem', { name: '详情与来源', exact: true }).click(); await expect(page.locator('.path-value')).toContainText('/电影时光/'); await page.getByRole('button', { name: '关闭', exact: true }).click()
   await page.getByRole('button', { name: `${name} 已整理 的更多操作` }).click(); await page.getByRole('menuitem', { name: '移到回收站', exact: true }).click(); await page.getByRole('button', { name: '移到回收站', exact: true }).click()
   await expect(page.getByText('没有找到相关内容')).toBeVisible()
