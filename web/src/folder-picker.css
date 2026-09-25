@@ -1,0 +1,45 @@
+.import-form{display:flex;flex-direction:column;overflow:hidden}
+.import-form .import-body{overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.destination-section{min-width:0;border-top:1px solid #edf1f8}
+.destination-section .destination-row{border:0;gap:18px;padding:12px 0}
+.destination-section .destination-row>span{flex-shrink:0;color:#8390a6}
+.destination-section .destination-row>button{flex:1;min-width:0;max-width:82%;padding:8px 10px;border-radius:9px;justify-content:flex-end;text-align:left;transition:background .18s}
+.destination-row>button:hover,.destination-row>button[aria-expanded=true]{background:#f4f7fd}
+.destination-path{min-width:0;overflow-wrap:anywhere;line-height:1.7;color:#5475af}
+.destination-toggle{display:flex;align-items:center;gap:4px;white-space:nowrap;flex-shrink:0;font-size:10px;color:#8e9eb7}
+.destination-toggle>span{display:flex}
+.destination-picker-panel{overflow:hidden}
+.destination-picker-panel>.folder-picker{margin-top:2px;margin-bottom:2px}
+.folder-picker{border:1px solid #e3ebf8;border-radius:12px;overflow:hidden;background:#fff;min-width:0}
+.folder-picker svg{flex-shrink:0}
+.picker-crumb{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:8px 10px;max-height:84px;overflow:auto;background:#fafcff;color:#a2b3cc;scrollbar-width:thin}
+.picker-crumb>span{display:flex;align-items:center;min-width:0;max-width:100%;gap:2px}
+.picker-crumb button{display:flex;align-items:center;gap:5px;padding:5px 6px;border-radius:5px;font-size:10px;text-align:left;white-space:normal;overflow-wrap:anywhere;min-width:0;color:#8c9eb9;transition:background .15s,color .15s}
+.picker-crumb button:hover{background:#edf3fd;color:#477cd0}
+.picker-crumb button[aria-current=location]{color:#5278b2;font-weight:500}
+.picker-crumb .picker-crumb-end{width:0;height:0;padding:0}
+.picker-current{display:flex;align-items:center;gap:10px;padding:12px;border-top:1px solid #ecf1fa;border-bottom:1px solid #ecf1fa;background:linear-gradient(100deg,#f0f6ff,#f8faff);color:#658bd0;outline-offset:-3px}
+.picker-up{display:grid;place-items:center;width:30px;height:30px;flex-shrink:0;border:1px solid #dce7f6;background:#fff;border-radius:8px;transition:background .16s,transform .16s}
+.picker-up:hover:enabled{background:#eaf1ff;transform:translateX(-2px)}
+.picker-up:disabled{opacity:.3;cursor:default}
+.picker-current>div{min-width:0;flex:1}
+.picker-current strong{display:block;overflow-wrap:anywhere;font-weight:500;font-size:12px;line-height:1.6;max-height:58px;overflow:auto}
+.picker-current small{display:block;color:#91a4c1;font-size:10px;margin-top:3px;line-height:1.5}
+.picker-selected{display:flex;align-items:center;gap:3px;border:1px solid #dbe8fc;border-radius:20px;background:#fff8;padding:4px 7px;font-size:10px;white-space:nowrap;flex-shrink:0}
+.picker-list{height:206px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;position:relative}
+.picker-page{min-height:100%;padding:5px}
+.picker-page>button{display:flex;align-items:center;gap:11px;width:100%;padding:11px 10px;border-radius:8px;text-align:left;font-size:12px;color:#7894bf;transition:background .15s,color .15s,transform .15s}
+.picker-page>button>span{flex:1;min-width:0;overflow-wrap:anywhere;line-height:1.6;color:#687d9d}
+.picker-page>button>svg:last-child{color:#b5c3d9;transition:transform .18s,color .18s}
+.picker-page>button:hover{background:#f0f5fe;color:#5485d3}
+.picker-page>button:hover>svg:last-child{transform:translateX(3px);color:#729ad5}
+.picker-page>button:active{background:#e6efff;transform:scale(.99)}
+.folder-picker button:focus-visible,.destination-row button:focus-visible{outline:2px solid #83a9ec;outline-offset:-2px}
+.picker-message{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;min-height:194px;padding:18px;text-align:center;font-size:12px;color:#90a4c2}
+.picker-message>svg{color:#a7bcda}
+.picker-message small{font-size:10px;color:#a4b1c5;overflow-wrap:anywhere;line-height:1.7;max-width:100%}
+.picker-error{color:#ad8179}
+.folder-picker .pagination{border-top:1px solid #edf2f9;padding:9px}
+@media(max-width:480px){.destination-section .destination-row{gap:8px}.destination-section .destination-row>button{max-width:78%;padding:8px 4px}.picker-current{padding:10px 8px;gap:7px}.picker-current>svg{display:none}.picker-current small{font-size:9px}.picker-selected{padding:3px 5px}.picker-list{height:184px}.picker-message{min-height:172px}}
+@media(prefers-reduced-motion:reduce){.folder-picker *,.destination-section *{transition:none!important;animation:none!important}}
+

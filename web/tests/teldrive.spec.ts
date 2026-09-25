@@ -18,7 +18,6 @@ test('moved TelDrive file stays unique and manual sync repairs its latest path',
   await page.getByRole('button',{name:'TelDrive 已整理.mp4 的更多操作'}).click()
   await page.getByRole('menuitem',{name:'移动到…',exact:true}).click()
   await page.locator('.picker-list').getByRole('button',{name:'TelDrive 整理目录',exact:true}).click()
-  await page.getByRole('button',{name:'选择当前文件夹'}).click()
   await page.getByRole('button',{name:'移动到这里'}).click()
   await expect.poll(async()=>{const n=await file();return `${n.parent_id}:${n.state}`}).toBe(`${target_id}:present`)
   const {csrf}=await (await page.request.get('/api/v1/auth/status')).json()
@@ -122,13 +121,21 @@ test('TelDrive folder selection, manual and automatic sync preserve the page', a
   await page.route('**/api/v1/teldrive',async route=>{
     if(route.request().method()==='GET')return route.fulfill({json:{monitors,active_account:'a'}})
     const body=route.request().postDataJSON()
-    expect(body.auto_minutes).toBe(0);expect(body.folder_id).toBe('source');expect(body.parent_id).toBe('root');expect(body.token).toBe('fixture-only-token')
-    monitors=[{...body,token:undefined,id:'monitor-1',target_path:'我的文件',last_run:0,last_job:null}]
+    expect(body.auto_minutes).toBe(0);expect(body.folder_id).toBe('source');expect(body.parent_id).toBe('target-child');expect(body.token).toBe('fixture-only-token')
+    monitors=[{...body,token:undefined,id:'monitor-1',target_path:'我的文件 / 同步收藏 / 已整理',last_run:0,last_job:null}]
     return route.fulfill({json:{id:'monitor-1'}})
   })
   await page.route('**/api/v1/teldrive/browse',route=>{
     const body=route.request().postDataJSON()
     return route.fulfill({json:{items:body.folder_id?[]:[{id:'source',name:longName,type:'folder',size:0},{id:'video',name:'video.mp4',type:'file',size:123456}],meta:{count:body.folder_id?0:2,currentPage:1,totalPages:1}}})
+  })
+  await page.route('**/api/v1/files?**',route=>{
+    const params=new URL(route.request().url()).searchParams
+    if(params.get('transfers')!=='0')return route.continue()
+    const parent=params.get('parent')
+    const files=parent==='root'?[{id:'target-main',name:'同步收藏',kind:'folder'}]:parent==='target-main'?[{id:'target-child',name:'已整理',kind:'folder'}]:[]
+    const breadcrumbs=parent==='root'?[]:[{id:'target-main',name:'同步收藏'},...(parent==='target-child'?[{id:'target-child',name:'已整理'}]:[])]
+    return route.fulfill({json:{files,breadcrumbs,total:files.length,page:0,limit:100}})
   })
   await page.route('**/api/v1/teldrive/monitor-1/sync',route=>{syncs++;monitors[0]={...monitors[0],last_job:{id:'scan',state:'completed',message:'已扫描 12 项，新增 2 个上传任务',title:'扫描',kind:'teldrive_scan'}};return route.fulfill({status:202,json:{id:'scan'}})})
   await page.route('**/api/v1/teldrive/monitor-1',route=>{
@@ -143,6 +150,12 @@ test('TelDrive folder selection, manual and automatic sync preserve the page', a
   await dialog.getByRole('button',{name:'连接并选择文件夹'}).click()
   await dialog.getByRole('button',{name:longName,exact:true}).click()
   await dialog.getByRole('button',{name:'选择当前文件夹'}).click()
+  await dialog.locator('.td-destination').getByRole('button').click()
+  await dialog.locator('.picker-list').getByRole('button',{name:'同步收藏',exact:true}).click()
+  await expect(dialog.locator('.folder-picker')).toBeVisible()
+  await dialog.locator('.picker-list').getByRole('button',{name:'已整理',exact:true}).click()
+  await expect(dialog.locator('.td-destination')).toContainText('已整理')
+  await expect(dialog.locator('.folder-picker').getByRole('button',{name:'选择当前文件夹'})).toHaveCount(0)
   await expect(dialog.getByLabel('同步方式')).toHaveValue('0')
   for(const width of [1440,768,390,360]){
     await page.setViewportSize({width,height:900})

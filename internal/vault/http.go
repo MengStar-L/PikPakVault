@@ -247,7 +247,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	})
 }
 
-var Version = "0.3.5"
+var Version = "0.3.6"
 
 func (a *App) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -554,6 +554,9 @@ func (a *App) filesList(w http.ResponseWriter, r *http.Request) error {
 		where += ` AND instr(lower(n.name),lower(?))>0`
 		args = append(args, search)
 	}
+	if q.Get("kind") == "folder" {
+		where += ` AND n.kind='folder'`
+	}
 	order := `n.kind DESC,n.name COLLATE NOCASE ASC,n.id`
 	sortCol := map[string]string{"name": "n.name COLLATE NOCASE", "size": "n.size", "modified": "n.modified", "created": "n.created"}[q.Get("sort")]
 	if sortCol != "" {
@@ -579,6 +582,14 @@ func (a *App) filesList(w http.ResponseWriter, r *http.Request) error {
 	}
 	if q.Get("transfers") == "0" {
 		pending = nil
+	} else if q.Get("kind") == "folder" {
+		folders := pending[:0]
+		for _, n := range pending {
+			if n.Kind == "folder" {
+				folders = append(folders, n)
+			}
+		}
+		pending = folders
 	}
 	operations, e := nodeJobs(tx, account)
 	if e != nil {

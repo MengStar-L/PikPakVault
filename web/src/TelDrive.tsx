@@ -91,7 +91,7 @@ function MonitorDialog({monitor,onClose}:{monitor:Monitor|null;onClose:()=>void}
       </div>}
       {source&&<div className="td-selection"><small>监控此目录及其全部子目录</small><strong><Folder size={17}/>{source.path||'/'}</strong></div>}
       <div className="td-destination"><span>保存到资源库</span><button className="text-button" disabled={!!monitor} onClick={()=>setTargetOpen(!targetOpen)}><Folder size={16}/>{targetName}<ChevronRight size={15}/></button></div>
-      {targetOpen&&<FolderPicker value={target} onChange={(id,label)=>{setTarget(id);setTargetName(label);setTargetOpen(false)}}/>}
+      {targetOpen&&<FolderPicker value={target} onChange={(id,_label,path)=>{setTarget(id);setTargetName(path)}}/>}
       <label className="td-interval">同步方式<select aria-label="同步方式" value={minutes} onChange={e=>setMinutes(Number(e.target.value))}>{[...new Set([...intervals,minutes])].sort((a,b)=>a-b).map(v=><option key={v} value={v}>{intervalLabel(v)}</option>)}</select></label>
       <p className="td-editor-note">同步新增文件及当前账号缺少的副本，不覆盖已有内容。关闭定时同步不会取消已排队的任务，可以在传输任务中暂停或取消。来源和目标保存后固定；更换目录请新建监控。</p>
       {error&&<div className="inline-error" role="alert">{error}</div>}
