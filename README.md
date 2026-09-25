@@ -27,6 +27,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 | 📁 文件资源库 | 网格 / 列表、完整路径面包屑、搜索、分类、收藏、拖动移动、多选、右键菜单和回收站 |
 | 🔗 来源留存 | 批量磁链、带提取码分享、分享预览与文件选择；逐文件记录原始来源和相对路径 |
 | 📨 TelDrive 同步 | 监控指定文件夹，手动 / 定时上传至当前 PikPak 账号；保留层级、跳过已保存文件、分片续传 |
+| 📡 RSS 订阅 | 一条订阅绑定一个保存目录，定时发现新资源；支持磁链、PikPak 分享及下载附件，去重、暂停与记录查看 |
 | ☁️ 云端账号 | 保存多个账号、切换活动账号；默认专用目录 `My Pack/PikPakVault`，设置中可自定义 |
 | ✨ 即时反馈 | 在当前文件夹创建传输任务，直接显示传输中的文件与进度；持久化任务、断线重连 |
 | 🎞️ 预览与播放 | 图片、文本、PDF、音视频；倍速、进度记忆、上游清晰度；可选文件夹视频封面；一键使用 PotPlayer 播放 |
@@ -43,7 +44,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 从 [Releases](https://github.com/MengStar-L/PikPakVault/releases/latest) 下载对应架构安装包与 `SHA256SUMS`，也可以执行：
 
 ```bash
-version=0.3.6
+version=0.3.7
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -99,6 +100,14 @@ PotPlayer 直接连接 PikPak，不使用需要网页登录态的服务器中转
 
 如果任务显示失败或需要处理，点击“重试”会继续原任务并显示核对进度。云端已保存但响应丢失时，会重新检查原目标目录，不盲目重复转存。无法唯一匹配的结果可在任务详情中关联；旧版本落到其他目录的结果需先核对归属，再修正到原目标位置。
 
+## RSS 自动收藏
+
+在侧栏 **RSS 订阅** 中新建规则，填写 RSS / Atom 地址、选择保存目录和检查间隔。每条订阅只对应一个目录，默认每 30 分钟检查一次，新增资源会自动加入当前 PikPak 账号的传输任务。
+
+首次检查默认只记录现有条目、从后续更新开始保存；勾选「同时保存订阅中现有的资源」可将订阅当前列出的资源一起加入队列。已保存的资源即使移动或重命名，也不会被再次下载。暂停订阅不影响已有传输任务，删除订阅不删除资源。
+
+支持 Animes Garden 等订阅中的磁链、PikPak 分享链接及公开可下载附件；普通文章页面会跳过并说明原因。查看逐条保存状态、重试失败任务及更多细节，请参阅 [RSS 使用说明](docs/RSS.md)。
+
 ## TelDrive 文件夹同步
 
 进入侧栏 **TelDrive 同步**，填写站点地址和 access_token，浏览选择来源目录与保存位置。默认仅手动，也可开启定时同步。程序自动下载并管理独立的 aria2，先把文件下载到程序目录下的缓存，再上传至 PikPak。支持断线续传、暂停和重启续跑；保存成功后自动清理，失败时保留缓存供重试。无需安装系统 aria2 或配置外部 RPC。
@@ -121,7 +130,7 @@ PotPlayer 直接连接 PikPak，不使用需要网页登录态的服务器中转
 sudo journalctl -u pikpak-vault-update -n 60 --no-pager
 sudo cat /var/lib/pikpak-vault-updater/status.json
 # 将版本号替换为实际新版本
-sudo bash deploy/update.sh v0.3.6
+sudo bash deploy/update.sh v0.3.7
 ```
 
 更新源默认是本仓库的公开 Releases，可在 root 管理的环境配置中设置 `VAULT_UPDATE_REPOSITORY=owner/repository`。Windows 和 Docker 支持检查与下载链接；网页自动安装仅用于上述 systemd 安装方式。Docker 更新请重新构建镜像并保留数据卷。
@@ -169,7 +178,7 @@ go test ./...
 go run ./cmd/vault serve --data ./data --listen 127.0.0.1:5675
 
 # Linux 双架构发布包
-bash scripts/build.sh 0.3.6
+bash scripts/build.sh 0.3.7
 ```
 
 前端 React 19 + TypeScript + Vite + Tailwind / Radix / Motion，后端 Go `net/http` + SQLite。前端产物嵌入可执行文件。开发热更新使用 `npm run dev --prefix web`。Docker 可执行 `docker compose up -d --build`。

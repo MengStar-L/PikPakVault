@@ -145,6 +145,12 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	}))
 	private := http.NewServeMux()
 	private.HandleFunc("GET /api/v1/teldrive", a.endpoint(a.telDriveList))
+	private.HandleFunc("GET /api/v1/rss", a.endpoint(a.rssList))
+	private.HandleFunc("POST /api/v1/rss", a.endpoint(a.rssSave))
+	private.HandleFunc("PATCH /api/v1/rss/{id}", a.endpoint(a.rssSave))
+	private.HandleFunc("DELETE /api/v1/rss/{id}", a.endpoint(a.rssDelete))
+	private.HandleFunc("POST /api/v1/rss/{id}/check", a.endpoint(a.rssCheck))
+	private.HandleFunc("GET /api/v1/rss/{id}/entries", a.endpoint(a.rssEntries))
 	private.HandleFunc("GET /api/v1/teldrive/cache", a.endpoint(a.telDriveCacheGet))
 	private.HandleFunc("POST /api/v1/teldrive/cache/clear", a.endpoint(a.telDriveCacheClear))
 	private.HandleFunc("POST /api/v1/teldrive", a.endpoint(a.telDriveSave))
@@ -247,7 +253,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	})
 }
 
-var Version = "0.3.6"
+var Version = "0.3.7"
 
 func (a *App) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1017,6 +1023,9 @@ func (a *App) sourceUpdate(w http.ResponseWriter, r *http.Request) error {
 		return fail(400, "请在 TelDrive 同步中更新连接认证；文件来源由监控记录管理")
 	}
 	newSource, e := ParseSource(v.Link, v.PassCode)
+	if e != nil && s.Kind == "url" {
+		newSource, e = rssAttachmentSource(v.Link)
+	}
 	if e != nil {
 		return fail(400, e.Error())
 	}

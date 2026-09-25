@@ -29,6 +29,9 @@ func backupTables(s *Store) []string {
 	if version >= 2 {
 		tables = append(tables, "teldrive_monitors")
 	}
+	if version >= 3 {
+		tables = append(tables, "rss_subscriptions", "rss_entries")
+	}
 	return tables
 }
 
@@ -120,7 +123,7 @@ func validateBackup(s *Store) error {
 	}
 	var version int
 	var integrity string
-	if e := s.DB.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version < 1 || version > 2 {
+	if e := s.DB.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version < 1 || version > 3 {
 		return fmt.Errorf("不支持该备份数据库版本，请先升级程序")
 	}
 	if e := s.DB.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); e != nil || integrity != "ok" {
@@ -164,6 +167,9 @@ func validateBackup(s *Store) error {
 	secretTables := []string{"accounts", "sources"}
 	if version >= 2 {
 		secretTables = append(secretTables, "teldrive_monitors")
+	}
+	if version >= 3 {
+		secretTables = append(secretTables, "rss_subscriptions")
 	}
 	for _, table := range secretTables {
 		rows, e := s.DB.Query(`SELECT secret FROM ` + table)
@@ -366,7 +372,7 @@ func replaceData(dst, src *Store) error {
 		return e
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"sessions", "bindings", "accounts", "sources", "nodes", "jobs", "events", "settings", "teldrive_monitors"} {
+	for _, table := range []string{"sessions", "bindings", "accounts", "sources", "nodes", "jobs", "events", "settings", "teldrive_monitors", "rss_entries", "rss_subscriptions"} {
 		if _, e = tx.Exec(`DELETE FROM ` + table); e != nil {
 			return e
 		}
@@ -396,7 +402,7 @@ func replaceData(dst, src *Store) error {
 				break
 			}
 			for i, col := range cols {
-				if col == "secret" && (table == "accounts" || table == "sources" || table == "teldrive_monitors") {
+				if col == "secret" && (table == "accounts" || table == "sources" || table == "teldrive_monitors" || table == "rss_subscriptions") {
 					var raw json.RawMessage
 					secret, ok := values[i].(string)
 					if !ok {

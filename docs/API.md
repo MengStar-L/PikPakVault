@@ -98,3 +98,16 @@ JSON 错误：`{"error":"可读原因"}`。PikPak 错误另提供 `code`、`endp
 | POST | `/teldrive/{id}/sync` | 扫描并排队上传，202 返回绑定当前账号的任务；重复提交返回已有活跃扫描 |
 
 `auto_minutes=0` 仅手动，开启范围 5–10080。来源 `folder_id=""` 表示 TelDrive 根目录，目标 `parent_id="root"` 表示本资源库根目录。任务类型为 `teldrive_scan` 和 `teldrive_upload`，控制与进度复用现有 jobs、SSE 和文件传输状态接口。
+
+## RSS 订阅接口
+
+| 方法与路径 | 输入 / 行为 |
+| --- | --- |
+| GET `/rss` | `{subscriptions,active_account}`，含目标路径、最近检查、错误、最近扫描任务与条目计数 |
+| POST `/rss` | `{name,url,parent_id,interval_minutes:30,enabled:true,import_existing:false}`，保存配置后自动调度 |
+| PATCH `/rss/{id}` | 同上，支持部分字段；URL 固定，修改目标只影响后续新条目 |
+| DELETE `/rss/{id}` | 移除规则与条目记录；保留资源、来源和已有保存任务 |
+| POST `/rss/{id}/check` | 返回 HTTP 202 和持久化 `rss_scan` 任务，可手动检查暂停的规则；需活动账号可用 |
+| GET `/rss/{id}/entries` | `page=0&limit=50`，返回 `{entries,total,page,limit}`；状态为 pending/saved/failed/skipped，含原任务 ID |
+
+所有接口需要管理员会话，写请求需要 CSRF。RSS URL 含查询令牌时加密存储，但可在管理员配置界面读取；日志不保存完整地址。`rss_subscriptions` 保存规则，`rss_entries` 保存订阅内的条目与资源去重身份。条目登记、来源和 import 任务在同一 SQLite 事务中提交；订阅列表根据原任务状态显示保存结果。RSS 和 Atom 的公开附件走 PikPak URL 离线接口，`sources.kind=url` 可通过来源更新接口替换失效链接。

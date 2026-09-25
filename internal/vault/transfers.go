@@ -92,7 +92,7 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 			for _, f := range files {
 				t.BeforeIDs = append(t.BeforeIDs, f.ID)
 			}
-			if s.Kind == "magnet" {
+			if s.Kind == "magnet" || s.Kind == "url" {
 				tasks, err := c.Tasks(ctx)
 				if err != nil {
 					return nil, err
@@ -110,7 +110,7 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 		}
 		var result pikpak.Transfer
 		var err error
-		if s.Kind == "magnet" {
+		if s.Kind == "magnet" || s.Kind == "url" {
 			result, err = c.Offline(ctx, s.Link, parent)
 		} else {
 			result, err = c.RestoreShare(ctx, s.ShareID, shareToken, shareIDs, parent)
@@ -169,7 +169,7 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 	}
 	taskPending, taskFailed := false, false
 	var taskErr error
-	if t.TaskID != "" || (s.Kind == "magnet" && t.Mode == "direct" && len(t.OutputIDs) == 0) {
+	if t.TaskID != "" || ((s.Kind == "magnet" || s.Kind == "url") && t.Mode == "direct" && len(t.OutputIDs) == 0) {
 		tasks, err := transferTasks(ctx, c, s.Kind, t.TaskID)
 		if err != nil {
 			// A task-list outage is not evidence that the saved file is unavailable.
@@ -181,7 +181,7 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 			if t.TaskID == "" {
 				candidates := []pikpak.Task{}
 				for _, task := range tasks {
-					if !contains(t.BeforeTasks, task.ID) && sameMagnet(s.Link, task.Params.URL) && task.FileID != "" {
+					if !contains(t.BeforeTasks, task.ID) && sameOfflineSource(s.Link, task.Params.URL) && task.FileID != "" {
 						f, err := c.Get(ctx, task.FileID)
 						if err != nil {
 							return nil, err

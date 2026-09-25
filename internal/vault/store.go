@@ -73,7 +73,7 @@ func Open(dir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	if version > 2 {
+	if version > 3 {
 		db.Close()
 		return nil, fmt.Errorf("database schema %d requires a newer PikPak Vault", version)
 	}
@@ -122,7 +122,11 @@ CREATE INDEX IF NOT EXISTS jobs_schedule ON jobs(state,next_run,created);
 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,detail TEXT NOT NULL,created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,csrf TEXT NOT NULL,expires INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS teldrive_monitors (id TEXT PRIMARY KEY,name TEXT NOT NULL,base_url TEXT NOT NULL,folder_id TEXT NOT NULL,folder_path TEXT NOT NULL,parent_id TEXT NOT NULL,secret TEXT NOT NULL,auto_minutes INTEGER NOT NULL DEFAULT 0,last_run INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
-PRAGMA user_version=2;
+CREATE TABLE IF NOT EXISTS rss_subscriptions (id TEXT PRIMARY KEY,name TEXT NOT NULL,secret TEXT NOT NULL,parent_id TEXT NOT NULL,interval_minutes INTEGER NOT NULL,enabled INTEGER NOT NULL,import_existing INTEGER NOT NULL,initialized INTEGER NOT NULL DEFAULT 0,last_checked INTEGER NOT NULL DEFAULT 0,next_check INTEGER NOT NULL DEFAULT 0,last_error TEXT NOT NULL DEFAULT '',etag TEXT NOT NULL DEFAULT '',last_modified TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS rss_entries (id TEXT PRIMARY KEY,subscription_id TEXT NOT NULL,entry_key TEXT NOT NULL,resource_key TEXT NOT NULL DEFAULT '',title TEXT NOT NULL,published INTEGER NOT NULL DEFAULT 0,discovered INTEGER NOT NULL,state TEXT NOT NULL,message TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',account_id TEXT NOT NULL DEFAULT '',source_id TEXT NOT NULL DEFAULT '',UNIQUE(subscription_id,entry_key));
+CREATE INDEX IF NOT EXISTS rss_entries_resource ON rss_entries(subscription_id,resource_key);
+CREATE INDEX IF NOT EXISTS rss_entries_recent ON rss_entries(subscription_id,discovered DESC,id);
+PRAGMA user_version=3;
 `
 
 func (s *Store) Get(k string) string {

@@ -529,7 +529,7 @@ func TestTelDriveAcceptsLegacyBackupAndMigrates(t *testing.T) {
 	}
 	var version int
 	dst.Store.DB.QueryRow(`PRAGMA user_version`).Scan(&version)
-	if version != 2 {
+	if version != 3 {
 		t.Fatal(version)
 	}
 	dir := a.Store.Dir

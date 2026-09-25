@@ -27,6 +27,7 @@ type App struct {
 	Factory       func(Account) (pikpak.Provider, error)
 	MediaHTTP     *http.Client
 	TelDriveHTTP  *http.Client
+	RSSHTTP       *http.Client
 	gate          sync.RWMutex
 	dataMu        sync.RWMutex // Import replaces the logical database as one transaction.
 	jobMu         sync.Mutex
@@ -150,6 +151,8 @@ type TransferState struct {
 	Started         int64           `json:"started"`
 }
 type JobData struct {
+	RSSID          string                     `json:"rss_id,omitempty"`
+	RSSManual      bool                       `json:"rss_manual,omitempty"`
 	MonitorID      string                     `json:"monitor_id,omitempty"`
 	ExactNodes     bool                       `json:"exact_nodes,omitempty"` // Automatic repair must not expand into healthy descendants.
 	Uploads        map[string]*TelDriveUpload `json:"uploads,omitempty"`
@@ -232,6 +235,7 @@ func (a *App) Run(ctx context.Context) {
 		a.scheduleScan()
 		a.scheduleCleanup()
 		a.scheduleTelDrive()
+		a.scheduleRSS()
 		a.dataMu.RUnlock()
 		j, e := jobScan(a.Store.DB.QueryRow(`SELECT `+jobCols+` FROM jobs WHERE state IN ('queued','waiting','retry') AND next_run<=? AND (kind='verify' OR (account_id=? AND EXISTS (SELECT 1 FROM accounts WHERE accounts.id=jobs.account_id AND status='ready'))) ORDER BY CASE WHEN kind='verify' THEN 0 WHEN kind='root' THEN 1 WHEN kind='cleanup' THEN 3 ELSE 2 END,next_run,created,id LIMIT 1`, now(), a.active()))
 		if e != nil {
@@ -285,6 +289,8 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 		c, e = a.client(j.AccountID)
 		if e == nil {
 			switch j.Kind {
+			case "rss_scan":
+				e = a.scanRSS(ctx, j, &d)
 			case "teldrive_scan":
 				e = a.scanTelDrive(ctx, c, j, &d)
 			case "teldrive_upload":
