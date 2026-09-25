@@ -352,7 +352,7 @@ func TestImportDeletionAndCrossAccountRecovery(t *testing.T) {
 			one = n
 		}
 	}
-	_, e = a.Store.DB.Exec(`UPDATE nodes SET name='Renamed movie.mp4',favorite=1,position=18 WHERE id=?`, one.ID)
+	_, e = a.Store.DB.Exec(`UPDATE nodes SET name='Renamed movie.mp4',favorite=1,position=18,played_at=123456 WHERE id=?`, one.ID)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -366,7 +366,7 @@ func TestImportDeletionAndCrossAccountRecovery(t *testing.T) {
 	recovery, _ := a.Store.NewJob("a", "recover", "Recover", JobData{NodeIDs: []string{one.ID}})
 	requireComplete(t, execute(t, a, &recovery))
 	saved, _ := a.Store.Node(one.ID, "a")
-	if saved.State != "present" || saved.Name != "Renamed movie.mp4" || !saved.Favorite || saved.Position != 18 {
+	if saved.State != "present" || saved.Name != "Renamed movie.mp4" || !saved.Favorite || saved.Position != 18 || saved.PlayedAt != 123456 {
 		t.Fatalf("lost desired state: %+v", saved)
 	}
 	second := newFake("user-b")
@@ -386,6 +386,9 @@ func TestImportDeletionAndCrossAccountRecovery(t *testing.T) {
 	}
 	all, _ := a.Store.AllNodes("b")
 	for _, n := range all {
+		if n.ID == one.ID && n.PlayedAt != 123456 {
+			t.Fatalf("cross-account recovery lost playback history: %+v", n)
+		}
 		if n.State != "present" {
 			t.Fatalf("not recovered %+v", n)
 		}

@@ -27,6 +27,8 @@ test.beforeEach(async({page})=>{
 
 test('video menus launch a fresh signed direct URL and keep the current folder',async({page})=>{
   let lookups=0
+  let playedRequests=0
+  page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/v1/files/coast/played')playedRequests++})
   await page.route('**/api/v1/files/coast/media',async route=>{
     lookups++
     await new Promise(resolve=>setTimeout(resolve,250))
@@ -36,18 +38,26 @@ test('video menus launch a fresh signed direct URL and keep the current folder',
   await card.getByRole('button',{name:`${name} 的更多操作`}).click()
   await page.getByRole('menuitem',{name:'使用 PotPlayer 播放',exact:true}).click()
   await expect.poll(()=>launches(page)).toEqual([`potplayer://${signed}`])
+  await expect.poll(()=>playedRequests).toBe(1)
+  await expect(card.locator('.played-badge')).toHaveText('已播放')
+  await expect.poll(async()=>(await(await page.request.get('/api/v1/files/coast')).json()).file.played_at).toBeGreaterThan(0)
   await expect(page).toHaveURL(/\/files$/)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(page.getByText('已请求打开 PotPlayer',{exact:true})).toBeVisible()
   await page.getByRole('button',{name:'再次打开',exact:true}).click()
   expect(await launches(page)).toHaveLength(2)
+  await expect.poll(()=>playedRequests).toBe(2)
   expect(lookups).toBe(1)
   await card.click({button:'right'})
   await page.getByRole('menuitem',{name:'使用 PotPlayer 播放',exact:true}).click()
   await expect.poll(()=>launches(page)).toHaveLength(3)
+  await expect.poll(()=>playedRequests).toBe(3)
   expect(lookups).toBe(2)
   await page.getByRole('button',{name:'旅途与风景 的更多操作',exact:true}).click()
   await expect(page.getByRole('menuitem',{name:'使用 PotPlayer 播放',exact:true})).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await page.reload()
+  await expect(card.locator('.played-badge')).toHaveText('已播放')
 })
 
 test('viewer preserves quality, pauses web playback and fits desktop and phone',async({page})=>{
@@ -86,6 +96,9 @@ test('viewer preserves quality, pauses web playback and fits desktop and phone',
 
 test('failed or unsafe links never launch and closing a pending preview cancels launch',async({page})=>{
   let mode='error'
+  let playedRequests=0
+  const before=(await(await page.request.get('/api/v1/files/coast')).json()).file.played_at
+  page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/v1/files/coast/played')playedRequests++})
   await page.route('**/api/v1/files/coast/media',async route=>{
     if(mode==='error'){await route.fulfill({status:409,json:{error:'请先恢复这个视频'}});return}
     if(mode==='slow')await new Promise(resolve=>setTimeout(resolve,800))
@@ -98,6 +111,7 @@ test('failed or unsafe links never launch and closing a pending preview cancels 
     await page.getByRole('menuitem',{name:'使用 PotPlayer 播放',exact:true}).click()
     await expect(page.locator('[data-sonner-toast][data-type=error]').last()).toBeVisible()
     expect(await launches(page)).toEqual([])
+    expect(playedRequests).toBe(0)
   }
   mode='slow'
   await card.dblclick()
@@ -106,4 +120,6 @@ test('failed or unsafe links never launch and closing a pending preview cancels 
   await page.getByRole('button',{name:'关闭',exact:true}).click()
   await page.waitForTimeout(1100)
   expect(await launches(page)).toEqual([])
+  expect(playedRequests).toBe(0)
+  expect((await(await page.request.get('/api/v1/files/coast')).json()).file.played_at).toBe(before)
 })

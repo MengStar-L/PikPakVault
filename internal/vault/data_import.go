@@ -123,7 +123,7 @@ func validateBackup(s *Store) error {
 	}
 	var version int
 	var integrity string
-	if e := s.DB.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version < 1 || version > 3 {
+	if e := s.DB.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version < 1 || version > currentSchemaVersion {
 		return fmt.Errorf("不支持该备份数据库版本，请先升级程序")
 	}
 	if e := s.DB.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); e != nil || integrity != "ok" {
@@ -367,6 +367,10 @@ func (a *App) importBackupCommit(w http.ResponseWriter, r *http.Request) error {
 }
 
 func replaceData(dst, src *Store) error {
+	var sourceVersion int
+	if e := src.DB.QueryRow(`PRAGMA user_version`).Scan(&sourceVersion); e != nil {
+		return e
+	}
 	tx, e := dst.DB.Begin()
 	if e != nil {
 		return e
@@ -443,6 +447,11 @@ func replaceData(dst, src *Store) error {
 		}
 		rows.Close()
 		if e != nil {
+			return e
+		}
+	}
+	if sourceVersion < 4 {
+		if _, e = tx.Exec(backfillPlayedHistory); e != nil {
 			return e
 		}
 	}

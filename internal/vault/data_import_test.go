@@ -40,7 +40,7 @@ func backupFixture(t *testing.T) (*App, []byte) {
 	if e = a.Store.InsertNode(n); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = a.Store.DB.Exec(`UPDATE nodes SET favorite=1,position=123.5,opened=456,trashed=1 WHERE id='saved'`); e != nil {
+	if _, e = a.Store.DB.Exec(`UPDATE nodes SET favorite=1,position=123.5,opened=456,played_at=345,trashed=1 WHERE id='saved'`); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = a.Store.DB.Exec(`INSERT INTO bindings(account_id,node_id,remote_id,state) VALUES('a','saved','remote-saved','present')`); e != nil {
@@ -121,7 +121,7 @@ func TestFullImportPreservesSecretsPathsAndHistory(t *testing.T) {
 		t.Fatalf("credentials lost: %v", e)
 	}
 	n, e := dst.Store.Node("saved", "a")
-	if e != nil || !n.Favorite || !n.Trashed || n.Position != 123.5 || n.RemoteID != "remote-saved" || n.SourcePath != "old/path/movie.mp4" {
+	if e != nil || !n.Favorite || !n.Trashed || n.Position != 123.5 || n.PlayedAt != 345 || n.RemoteID != "remote-saved" || n.SourcePath != "old/path/movie.mp4" {
 		t.Fatalf("record mismatch: %+v %v", n, e)
 	}
 	source, e := dst.Store.Source(n.SourceID)

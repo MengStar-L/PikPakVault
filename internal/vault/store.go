@@ -25,6 +25,8 @@ type Store struct {
 	key []byte
 }
 
+const currentSchemaVersion = 4
+
 func ID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -73,12 +75,16 @@ func Open(dir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	if version > 3 {
+	if version > currentSchemaVersion {
 		db.Close()
 		return nil, fmt.Errorf("database schema %d requires a newer PikPak Vault", version)
 	}
 	s := &Store{DB: db, Dir: dir, key: key}
 	if _, err = db.Exec(schema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = s.migratePlayedHistory(version); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -111,7 +117,7 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY,name TEXT NOT NULL,identity TEXT NOT NULL DEFAULT '',secret TEXT NOT NULL,root_id TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'unverified',error TEXT NOT NULL DEFAULT '',verification_url TEXT NOT NULL DEFAULT '',quota_limit INTEGER NOT NULL DEFAULT 0,quota_used INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS account_identity ON accounts(identity) WHERE identity<>'';
 CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY,kind TEXT NOT NULL,link TEXT NOT NULL,share_id TEXT NOT NULL DEFAULT '',share_parent TEXT NOT NULL DEFAULT '',secret TEXT NOT NULL,selected TEXT NOT NULL DEFAULT '[]',manifest TEXT NOT NULL DEFAULT '[]',created INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY,parent_id TEXT NOT NULL DEFAULT 'root',name TEXT NOT NULL,kind TEXT NOT NULL,size INTEGER NOT NULL DEFAULT 0,hash TEXT NOT NULL DEFAULT '',mime TEXT NOT NULL DEFAULT '',source_id TEXT NOT NULL DEFAULT '',source_path TEXT NOT NULL DEFAULT '',source_key TEXT NOT NULL DEFAULT '',favorite INTEGER NOT NULL DEFAULT 0,trashed INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL,modified INTEGER NOT NULL,opened INTEGER NOT NULL DEFAULT 0,position REAL NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY,parent_id TEXT NOT NULL DEFAULT 'root',name TEXT NOT NULL,kind TEXT NOT NULL,size INTEGER NOT NULL DEFAULT 0,hash TEXT NOT NULL DEFAULT '',mime TEXT NOT NULL DEFAULT '',source_id TEXT NOT NULL DEFAULT '',source_path TEXT NOT NULL DEFAULT '',source_key TEXT NOT NULL DEFAULT '',favorite INTEGER NOT NULL DEFAULT 0,trashed INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL,modified INTEGER NOT NULL,opened INTEGER NOT NULL DEFAULT 0,position REAL NOT NULL DEFAULT 0,played_at INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 1);
 INSERT OR IGNORE INTO nodes(id,parent_id,name,kind,created,modified) VALUES('root','','My files','folder',0,0);
 CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parent_id,trashed);
 CREATE INDEX IF NOT EXISTS nodes_source ON nodes(source_id,source_path);
@@ -126,8 +132,38 @@ CREATE TABLE IF NOT EXISTS rss_subscriptions (id TEXT PRIMARY KEY,name TEXT NOT 
 CREATE TABLE IF NOT EXISTS rss_entries (id TEXT PRIMARY KEY,subscription_id TEXT NOT NULL,entry_key TEXT NOT NULL,resource_key TEXT NOT NULL DEFAULT '',title TEXT NOT NULL,published INTEGER NOT NULL DEFAULT 0,discovered INTEGER NOT NULL,state TEXT NOT NULL,message TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',account_id TEXT NOT NULL DEFAULT '',source_id TEXT NOT NULL DEFAULT '',UNIQUE(subscription_id,entry_key));
 CREATE INDEX IF NOT EXISTS rss_entries_resource ON rss_entries(subscription_id,resource_key);
 CREATE INDEX IF NOT EXISTS rss_entries_recent ON rss_entries(subscription_id,discovered DESC,id);
-PRAGMA user_version=3;
 `
+
+// Opening a preview used to update opened without starting playback. Only an
+// actual saved positive playback position provides evidence for legacy history.
+const backfillPlayedHistory = `UPDATE nodes SET played_at=opened WHERE kind='file' AND played_at=0 AND position>0 AND opened>0`
+
+func (s *Store) migratePlayedHistory(version int) error {
+	if version >= currentSchemaVersion {
+		return nil
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var hasPlayedAt int
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('nodes') WHERE name='played_at'`).Scan(&hasPlayedAt); err != nil {
+		return err
+	}
+	if hasPlayedAt == 0 {
+		if _, err = tx.Exec(`ALTER TABLE nodes ADD COLUMN played_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(backfillPlayedHistory); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, currentSchemaVersion)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 func (s *Store) Get(k string) string {
 	var v string
@@ -244,6 +280,7 @@ type Node struct {
 	Modified       int64           `json:"modified"`
 	Opened         int64           `json:"opened"`
 	Position       float64         `json:"position"`
+	PlayedAt       int64           `json:"played_at"`
 	Revision       int64           `json:"revision"`
 	State          string          `json:"state"`
 	RemoteID       string          `json:"remote_id,omitempty"`
@@ -251,10 +288,10 @@ type Node struct {
 	Checked        int64           `json:"checked"`
 }
 
-const nodeCols = `n.id,n.parent_id,n.name,n.kind,n.size,n.hash,n.mime,n.source_id,n.source_path,n.source_key,n.favorite,n.trashed,n.created,n.modified,n.opened,n.position,n.revision,COALESCE(b.state,'unbound'),COALESCE(b.remote_id,''),COALESCE(b.thumbnail,''),COALESCE(b.checked,0)`
+const nodeCols = `n.id,n.parent_id,n.name,n.kind,n.size,n.hash,n.mime,n.source_id,n.source_path,n.source_key,n.favorite,n.trashed,n.created,n.modified,n.opened,n.position,n.played_at,n.revision,COALESCE(b.state,'unbound'),COALESCE(b.remote_id,''),COALESCE(b.thumbnail,''),COALESCE(b.checked,0)`
 
 func nodeScan(r scanner) (n Node, e error) {
-	e = r.Scan(&n.ID, &n.ParentID, &n.Name, &n.Kind, &n.Size, &n.Hash, &n.Mime, &n.SourceID, &n.SourcePath, &n.SourceKey, &n.Favorite, &n.Trashed, &n.Created, &n.Modified, &n.Opened, &n.Position, &n.Revision, &n.State, &n.RemoteID, &n.Thumbnail, &n.Checked)
+	e = r.Scan(&n.ID, &n.ParentID, &n.Name, &n.Kind, &n.Size, &n.Hash, &n.Mime, &n.SourceID, &n.SourcePath, &n.SourceKey, &n.Favorite, &n.Trashed, &n.Created, &n.Modified, &n.Opened, &n.Position, &n.PlayedAt, &n.Revision, &n.State, &n.RemoteID, &n.Thumbnail, &n.Checked)
 	return
 }
 func (s *Store) Node(id, account string) (Node, error) {

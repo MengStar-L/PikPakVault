@@ -114,7 +114,7 @@ func TestRSSImportLegacyBackupClearsSubscriptions(t *testing.T) {
 				}
 			}
 			var importedVersion int
-			if e = dst.Store.DB.QueryRow(`PRAGMA user_version`).Scan(&importedVersion); e != nil || importedVersion != 3 {
+			if e = dst.Store.DB.QueryRow(`PRAGMA user_version`).Scan(&importedVersion); e != nil || importedVersion != currentSchemaVersion {
 				t.Fatalf("legacy import changed current schema: version=%d error=%v", importedVersion, e)
 			}
 			if dst.Store.Get("import_review_required") != "true" {
@@ -127,7 +127,7 @@ func TestRSSImportLegacyBackupClearsSubscriptions(t *testing.T) {
 func TestRSSBackupRejectsFutureSchemaAndMismatchedCredentials(t *testing.T) {
 	t.Run("future-schema", func(t *testing.T) {
 		a, _ := testApp(t)
-		if _, e := a.Store.DB.Exec(`PRAGMA user_version=4`); e != nil {
+		if _, e := a.Store.DB.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, currentSchemaVersion+1)); e != nil {
 			t.Fatal(e)
 		}
 		if e := validateBackup(a.Store); e == nil || !strings.Contains(e.Error(), "数据库版本") {

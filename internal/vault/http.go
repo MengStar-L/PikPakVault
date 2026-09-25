@@ -169,6 +169,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	private.HandleFunc("GET /api/v1/files/{id}", a.endpoint(a.fileDetail))
 	private.HandleFunc("POST /api/v1/files/action", a.endpoint(a.filesAction))
 	private.HandleFunc("PATCH /api/v1/files/{id}/position", a.endpoint(a.position))
+	private.HandleFunc("POST /api/v1/files/{id}/played", a.endpoint(a.played))
 	private.HandleFunc("POST /api/v1/imports/preview", a.endpoint(a.sharePreview))
 	private.HandleFunc("POST /api/v1/imports", a.endpoint(a.importCreate))
 	private.HandleFunc("PUT /api/v1/sources/{id}", a.endpoint(a.sourceUpdate))
@@ -895,6 +896,23 @@ func (a *App) filesAction(w http.ResponseWriter, r *http.Request) error {
 	writeJSON(w, 200, map[string]any{"ok": true, "job": j})
 	return nil
 }
+func (a *App) played(w http.ResponseWriter, r *http.Request) error {
+	playedAt := now()
+	result, e := a.Store.DB.Exec(`UPDATE nodes SET played_at=?,opened=? WHERE id=? AND kind='file' AND trashed=0`, playedAt, playedAt, r.PathValue("id"))
+	if e != nil {
+		return e
+	}
+	count, e := result.RowsAffected()
+	if e != nil {
+		return e
+	}
+	if count == 0 {
+		return fail(404, "File is not available")
+	}
+	writeJSON(w, 200, map[string]int64{"played_at": playedAt})
+	return nil
+}
+
 func (a *App) position(w http.ResponseWriter, r *http.Request) error {
 	var v struct {
 		Position float64 `json:"position"`

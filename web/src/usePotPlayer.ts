@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api, fileType } from './api'
 import type { FileNode, MediaData } from './api'
+import { usePlaybackHistory } from './usePlaybackHistory'
 
 export function canPlayExternally(file:FileNode) {
   return fileType(file)==='video' && !file.transfer && !file.trashed && !['missing','unbound','pending','conflict','trashed'].includes(file.state)
@@ -27,6 +28,7 @@ function launch(href:string) {
 }
 
 export function usePotPlayer(scope:string|undefined) {
+  const recordPlayed=usePlaybackHistory()
   const [busy,setBusy]=useState<string|null>(null)
   const request=useRef<symbol|null>(null)
   const notice=useRef<string|number|null>(null)
@@ -59,6 +61,7 @@ export function usePotPlayer(scope:string|undefined) {
       const open=()=>{
         if(Date.now()-prepared>60000){void play(file,quality,onLaunch);return}
         launch(href)
+        void recordPlayed(file.id)
         onLaunch?.()
       }
       open()

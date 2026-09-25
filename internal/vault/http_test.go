@@ -269,6 +269,9 @@ func TestMediaRangeAndNoArbitraryURLs(t *testing.T) {
 	if w.Code != 206 || w.Body.String() != "2345" || w.Header().Get("Content-Range") != "bytes 2-5/10" {
 		t.Fatalf("broken range %d %s", w.Code, w.Body.String())
 	}
+	if n, err := a.Store.Node(nodes[0].ID, "a"); err != nil || n.PlayedAt != 0 {
+		t.Fatalf("fetching content marked a file played: %+v %v", n, err)
+	}
 	for _, u := range []string{"http://example.com/file", "https://127.0.0.1/x", "https://169.254.169.254/metadata", "https://[::1]/x", "https://user:pass@example.com/x"} {
 		if safeMediaURL(u) == nil {
 			t.Fatal("unsafe media accepted", u)

@@ -20,7 +20,7 @@ func TestAdoptRemotePathsPreservesSourceAndPersonalMetadata(t *testing.T) {
 			collection = n
 		}
 	}
-	a.Store.DB.Exec(`UPDATE nodes SET favorite=1,position=98 WHERE id=?`, file.ID)
+	a.Store.DB.Exec(`UPDATE nodes SET favorite=1,position=98,played_at=123456 WHERE id=?`, file.ID)
 	ac, _ := a.Store.Account("a")
 	parent, _ := f.Mkdir(context.Background(), ac.RootID, "自己整理的目录")
 	f.Move(context.Background(), collection.RemoteID, parent.ID)
@@ -47,7 +47,7 @@ func TestAdoptRemotePathsPreservesSourceAndPersonalMetadata(t *testing.T) {
 	}
 	got, _ := a.Store.Node(file.ID, "a")
 	p, _ := a.Store.Path(got.ID)
-	if p != "/自己整理的目录/Collection/renamed.mp4" || got.SourceID != file.SourceID || got.SourcePath != file.SourcePath || !got.Favorite || got.Position != 98 {
+	if p != "/自己整理的目录/Collection/renamed.mp4" || got.SourceID != file.SourceID || got.SourcePath != file.SourcePath || !got.Favorite || got.Position != 98 || got.PlayedAt != 123456 {
 		t.Fatalf("lost metadata: %s %+v", p, got)
 	}
 	all, _ := a.Store.AllNodes("a")
