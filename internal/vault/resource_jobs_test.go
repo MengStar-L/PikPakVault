@@ -16,12 +16,14 @@ func recoveryPreviewForTest(t *testing.T, a *App, ids []string) struct {
 	Items   []Node `json:"items"`
 	Bytes   int64  `json:"bytes"`
 	Skipped int    `json:"skipped_pending"`
+	Pending []Job  `json:"pending_jobs"`
 } {
 	t.Helper()
 	var out struct {
 		Items   []Node `json:"items"`
 		Bytes   int64  `json:"bytes"`
 		Skipped int    `json:"skipped_pending"`
+		Pending []Job  `json:"pending_jobs"`
 	}
 	w := request(t, a.Handler(nil), "POST", "/api/v1/recovery/preview", recoveryInput{IDs: ids}, "test-csrf")
 	if w.Code != 200 {
@@ -31,6 +33,64 @@ func recoveryPreviewForTest(t *testing.T, a *App, ids []string) struct {
 		t.Fatal(err)
 	}
 	return out
+}
+
+func TestRecoveryPreviewProvidesOriginalTaskAndSelectedFailure(t *testing.T) {
+	a, _ := testApp(t)
+	sessionForTest(t, a)
+	for _, id := range []string{"one", "two"} {
+		if err := a.Store.InsertNode(Node{ID: id, ParentID: "root", Name: id + ".mp4", Kind: "file"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j, err := a.Store.NewJob("a", "recover", "Restore library", JobData{
+		NodeIDs: []string{"one", "two"}, RecoveryLane: telDriveLane,
+		Problems:  map[string]string{"one": "TelDrive 文件流提前断开，缓存已保留", "two": "second selected failure"},
+		Transfers: map[string]*TransferState{"private": {ShareTrace: json.RawMessage(`{"secret":"private-transfer-token"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"paused", "partial", "failed", "attention", "queued", "running", "waiting", "retry"} {
+		j.State, j.Message, j.Progress = state, "1 item(s) need attention", 100
+		if err := a.Store.SaveJob(&j, nil); err != nil {
+			t.Fatal(err)
+		}
+		p := recoveryPreviewForTest(t, a, []string{"one", "two"})
+		if len(p.Items) != 0 || p.Skipped != 2 || len(p.Pending) != 1 {
+			t.Fatalf("missing or duplicated task for %s: %+v", state, p)
+		}
+		original := p.Pending[0]
+		if original.ID != j.ID || original.State != state || original.Lane != telDriveLane ||
+			!strings.Contains(original.Message, "缓存已保留") || !strings.Contains(original.Message, "second selected failure") {
+			t.Fatalf("wrong original task: %+v", original)
+		}
+		selected := recoveryPreviewForTest(t, a, []string{"one"})
+		if strings.Contains(selected.Pending[0].Message, "second selected failure") {
+			t.Fatal("unselected file error shown")
+		}
+		w := request(t, a.Handler(nil), "POST", "/api/v1/recovery/preview", recoveryInput{IDs: []string{"one"}}, "test-csrf")
+		if strings.Contains(w.Body.String(), "private-transfer-token") || strings.Contains(w.Body.String(), "share_trace") {
+			t.Fatal("preview exposed raw transfer credentials")
+		}
+		list := readTransferListing(t, a, "view=missing&search=one")
+		if list.Total != 1 || list.Files[0].Transfer == nil || list.Files[0].Transfer.JobID != j.ID || list.Files[0].State == "transferring" {
+			t.Fatalf("recovery list lost missing state or task route: %+v", list)
+		}
+	}
+	addAccount(t, a, "b", "user-b")
+	a.Store.Set("active_account", "b")
+	if p := recoveryPreviewForTest(t, a, []string{"one"}); len(p.Pending) != 0 || p.Skipped != 0 || len(p.Items) != 1 {
+		t.Fatal("another account's task blocked recovery", p)
+	}
+	a.Store.Set("active_account", "a")
+	for _, state := range []string{"completed", "cancelled"} {
+		j.State = state
+		a.Store.SaveJob(&j, nil)
+		if p := recoveryPreviewForTest(t, a, []string{"one"}); len(p.Pending) != 0 || p.Skipped != 0 || len(p.Items) != 1 {
+			t.Fatal("finished task still reserves missing resource", p)
+		}
+	}
 }
 
 func recoveryCountForTest(t *testing.T, a *App) int {

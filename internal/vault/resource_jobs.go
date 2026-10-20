@@ -4,12 +4,13 @@ import "database/sql"
 
 // Scope reservations to an account and stable local IDs, never a destination
 // path. Paused/failed tasks retain their upload session until explicitly cancelled.
-// Recoveries expand folders just like Descendants, including children added later.
+// Legacy recoveries expand folders just like Descendants. Completed recovery
+// items release their claim even while another item in the job needs attention.
 const resourceJobsCTE = `WITH RECURSIVE unfinished_jobs AS (
 	SELECT id,kind,state,progress,message,created,data FROM jobs
 	WHERE account_id=? AND state NOT IN ('completed','cancelled')
 	AND (kind IN ('import','teldrive_upload','recover') OR (kind='sync' AND COALESCE(json_extract(data,'$.monitor_id'),'')<>''))
-), resource_jobs(job_id,node_id,kind) AS (
+), expanded_resource_jobs(job_id,node_id,kind) AS (
 	SELECT j.id,n.id,j.kind FROM unfinished_jobs j JOIN nodes n ON n.source_id=json_extract(j.data,'$.source_id')
 	WHERE j.kind IN ('import','teldrive_upload') AND n.source_id<>''
 	UNION
@@ -20,8 +21,14 @@ const resourceJobsCTE = `WITH RECURSIVE unfinished_jobs AS (
 	AND NOT EXISTS (SELECT 1 FROM json_each(j.data,'$.node_ids'))
 	AND COALESCE(json_extract(j.data,'$.exact_nodes'),0)<>1
 	UNION
-	SELECT r.job_id,n.id,r.kind FROM resource_jobs r JOIN nodes n ON n.parent_id=r.node_id WHERE r.kind='recover'
+	SELECT r.job_id,n.id,r.kind FROM expanded_resource_jobs r JOIN nodes n ON n.parent_id=r.node_id WHERE r.kind='recover'
 	AND NOT EXISTS (SELECT 1 FROM unfinished_jobs j WHERE j.id=r.job_id AND json_extract(j.data,'$.exact_nodes')=1)
+), resource_jobs(job_id,node_id,kind) AS (
+	SELECT r.job_id,r.node_id,r.kind FROM expanded_resource_jobs r
+	JOIN unfinished_jobs j ON j.id=r.job_id
+	WHERE r.kind<>'recover' OR NOT EXISTS (
+		SELECT 1 FROM json_each(j.data,'$.done') d WHERE d.key=r.node_id AND d.value=1
+	)
 )
 `
 

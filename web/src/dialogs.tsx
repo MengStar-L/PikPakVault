@@ -1,7 +1,9 @@
 import type { MediaData } from './api'
 import { canPlayExternally, usePotPlayer } from './usePotPlayer'
 import { usePlaybackHistory } from './usePlaybackHistory'
-import { RecoveryLanesNote } from './JobLane'
+import { JobLane, RecoveryLanesNote } from './JobLane'
+import { TaskDetail } from './TaskDetail'
+import { useJobRetry } from './useJobRetry'
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { folderPath, FolderPickerPanel, useFolderPage } from './FolderPicker'
@@ -14,9 +16,9 @@ import '@vidstack/react/player/styles/default/theme.css'
 import '@vidstack/react/player/styles/default/layouts/video.css'
 import '@vidstack/react/player/styles/default/layouts/audio.css'
 import { toast } from 'sonner'
-import { MonitorPlay, ArrowDownToLine, ArrowRight, Check, ChevronDown, Copy, ExternalLink, FileText, Folder, Link2, LoaderCircle, Plus, RefreshCw, ShieldCheck, Sparkles, X, ZoomIn, ZoomOut, RotateCcw, AlertCircle, Server, Wifi, CheckCircle2 } from 'lucide-react'
+import { MonitorPlay, ArrowDownToLine, ArrowRight, Check, ChevronDown, Copy, ExternalLink, FileText, Folder, Link2, LoaderCircle, Pause, Play, Plus, RefreshCw, ShieldCheck, Sparkles, X, ZoomIn, ZoomOut, RotateCcw, AlertCircle, Server, Wifi, CheckCircle2 } from 'lucide-react'
 import { api, bytes, date, fileType } from './api'
-import type { Account, Entry, FileNode, Source } from './api'
+import type { Account, Entry, FileNode, Job, Source } from './api'
 import { BackupNote, EmptyState, ErrorState, FileIcon, FolderPicker, IconButton, Loading, Modal, Status } from './components'
 
 export function ImportDialog({open,parent,onClose}:{open:boolean;parent:string;onClose:()=>void}){
@@ -37,12 +39,55 @@ export function DetailDrawer({file,onClose}:{file:FileNode|null;onClose:()=>void
   return <Modal open={!!file} onClose={onClose} title="文件详情" drawer>{q.isLoading?<Loading/>:q.error?<ErrorState error={q.error}/>:q.data&&<div className="detail-body"><div className={`detail-cover ${fileType(q.data.file)}`}><FileIcon file={q.data.file} size={60}/></div><h2 className="detail-name">{q.data.file.name}</h2><Status state={q.data.file.state}/><div className="detail-section"><h3>基本信息</h3><dl><dt>大小</dt><dd>{q.data.file.kind==='folder'?'文件夹':bytes(q.data.file.size)}</dd><dt>保存时间</dt><dd>{date(q.data.file.created)}</dd><dt>最近检查</dt><dd>{date(q.data.file.checked)}</dd>{!!q.data.file.played_at&&<><dt>播放记录</dt><dd>已播放 · {date(q.data.file.played_at)}</dd></>}<dt>所在路径</dt><dd className="path-value">{q.data.path}<button onClick={()=>copy(q.data!.path)} aria-label="复制路径"><Copy size={14}/></button></dd></dl></div><div className="detail-section"><h3><Link2 size={15}/>恢复来源</h3>{q.data.source?<><span className="source-kind">{q.data.source.kind==='teldrive'?'TelDrive 文件':q.data.source.kind==='magnet'?'磁力链接':q.data.source.kind==='url'?'RSS 下载附件':'PikPak 分享'}</span><div className="source-link">{q.data.source.link}</div><div className="detail-source-actions"><button className="text-button" onClick={()=>copy(q.data!.source!.link)}><Copy size={14}/>复制链接</button>{q.data.source.kind==='teldrive'?<a className="text-button" href="/teldrive">管理 TelDrive 连接</a>:<button className="text-button" onClick={()=>{setEditing(!editing);setLink(q.data!.source!.link)}}><RefreshCw size={14}/>替换来源</button>}</div><small className="muted">来源内路径</small><p className="break-anywhere">{q.data.file.source_path||'—'}</p>{editing&&<div className="source-edit"><label>新的来源链接<textarea value={link} onChange={e=>setLink(e.target.value)} rows={3}/></label><label>提取码（如有）<input value={pass} onChange={e=>setPass(e.target.value)}/></label><button className="button primary" disabled={busy||!link} onClick={save}>保存新来源</button></div>}</>:<p className="muted">这个文件夹由本程序创建，无需来源链接。</p>}</div>{q.data.file.hash&&<div className="detail-section"><h3>文件指纹</h3><code className="hash-value">{q.data.file.hash}</code><p className="muted">用于内容核对和尝试云端秒传。</p></div>}<BackupNote/></div>}</Modal>
 }
 
-type RecoveryPreview={account:Account;skipped_pending:number;items:{id:string;name:string;path:string;state:string;size:number;method:string;has_source:boolean;conflict:boolean}[];bytes:number;transfer_bytes:number;available:number;capacity_warning:boolean}
-export function RecoveryDialog({ids,onClose}:{ids:string[]|null;onClose:()=>void}){
-  const navigate=useNavigate();const client=useQueryClient();const [busy,setBusy]=useState(false);const q=useQuery({queryKey:['preview','recovery',ids],queryFn:()=>api<RecoveryPreview>('/recovery/preview',{ids:ids||[]}),enabled:ids!==null,retry:false});
-  async function start(){setBusy(true);try{await api('/recovery',{ids:q.data!.items.map(item=>item.id),account_id:q.data!.account.id,confirm:true});toast.success('恢复任务已创建');client.invalidateQueries({queryKey:['jobs']});onClose();navigate('/tasks')}catch(e){toast.error((e as Error).message)}finally{setBusy(false)}}
-  const methods:Record<string,string>={source:'原始来源重建',directory:'重建文件夹',verify_or_untrash:'核对 → 回收站 → 来源',instant_or_source:'云端秒传 → 原始来源'};
-  return <Modal open={ids!==null} onClose={onClose} title="确认恢复资源" subtitle="先核对恢复范围，确认后才会向当前账号写入。" wide><div className="modal-body">{q.isLoading?<Loading/>:q.error?<ErrorState error={q.error} retry={()=>q.refetch()}/>:q.data&&<><div className="recovery-target"><span className="recovery-icon"><ShieldCheck size={24}/></span><div><small>恢复到当前账号</small><strong>{q.data.account.name}</strong></div><span>{q.data.items.length} 项资源</span></div><div className="recovery-estimate"><span>预计预留空间 <strong>{bytes(q.data.transfer_bytes)}</strong></span><span>账号剩余空间 <strong>{bytes(q.data.available)}</strong></span></div>{q.data.capacity_warning&&<div className="warning-box"><AlertCircle size={17}/>预计空间不足，可先减少选择范围或切换账号。</div>}{q.data.skipped_pending>0&&<p className="muted" role="status">已跳过 {q.data.skipped_pending} 项已有传输或恢复任务的资源，请在传输任务中继续或重试原任务。</p>}<div className="recovery-preview-list">{q.data.items.map(item=><div key={item.id}><span><strong>{item.name}</strong><small>{item.path}</small></span><span className={item.conflict?'danger-text':''}>{item.conflict?'内容冲突 · 需处理':methods[item.method]}</span></div>)}{!q.data.items.length&&<p className="muted">所选资源目前无需恢复。</p>}</div><RecoveryLanesNote/><p className="recovery-disclaimer">空间按完整来源批次估算；回收站还原或秒传命中时可能更少。执行时会再次核对冲突。来源失效或云端没有可用副本时，可能无法恢复文件内容。失败项目会保留记录，不会覆盖同名的其他文件。</p></>}</div><div className="modal-actions"><button className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={busy||!q.data?.items.length} onClick={start}>{busy?<LoaderCircle size={17} className="spin"/>:<RotateCcw size={17}/>}确认开始恢复</button></div></Modal>
+type RecoveryPendingJob = Pick<Job, 'id' | 'title' | 'kind' | 'state' | 'progress' | 'message' | 'lane'>
+type RecoveryPreview = {
+  account: Account; skipped_pending: number; pending_jobs?: RecoveryPendingJob[]
+  items: {id:string;name:string;path:string;state:string;size:number;method:string;has_source:boolean;conflict:boolean}[]
+  bytes: number; transfer_bytes: number; available: number; capacity_warning: boolean
+}
+export function RecoveryDialog({ids,onClose}:{ids:string[]|null;onClose:()=>void}) {
+  const navigate=useNavigate();const client=useQueryClient();const retry=useJobRetry()
+  const [busy,setBusy]=useState(false);const [pausing,setPausing]=useState('');const [detail,setDetail]=useState<string|null>(null)
+  const q=useQuery({queryKey:['preview','recovery',ids],queryFn:()=>api<RecoveryPreview>('/recovery/preview',{ids:ids||[]}),enabled:ids!==null,retry:false,
+    refetchInterval:query=>ids!==null&&(query.state.data?.skipped_pending||0)>0?2500:false})
+  useEffect(()=>{if(ids===null)setDetail(null)},[ids])
+  async function start() {
+    setBusy(true)
+    try {await api('/recovery',{ids:q.data!.items.map(item=>item.id),account_id:q.data!.account.id,confirm:true});toast.success('恢复任务已创建');client.invalidateQueries({queryKey:['jobs']});onClose();navigate('/tasks')}
+    catch(e){toast.error((e as Error).message)}finally{setBusy(false)}
+  }
+  async function control(job:RecoveryPendingJob,action:'pause'|'retry') {
+    if(action==='retry') {await retry.retry(job.id);await q.refetch();return}
+    setPausing(job.id)
+    try {await api(`/jobs/${job.id}/pause`,{});toast.success('原任务已暂停');await Promise.all(['jobs','summary','files','job-detail'].map(key=>client.invalidateQueries({queryKey:[key]})));await q.refetch()}
+    catch(e){toast.error((e as Error).message)}finally{setPausing('')}
+  }
+  const methods:Record<string,string>={source:'原始来源重建',directory:'重建文件夹',verify_or_untrash:'核对 → 回收站 → 来源',instant_or_source:'云端秒传 → 原始来源'}
+  const pending=q.data?.pending_jobs||[];const controlsBusy=!!pausing||!!retry.busyJob
+  return <><Modal open={ids!==null} onClose={onClose} title="确认恢复资源" subtitle="先核对恢复范围，确认后才会向当前账号写入。" wide>
+    <div className="modal-body">{q.isLoading?<Loading/>:q.error?<ErrorState error={q.error} retry={()=>q.refetch()}/>:q.data&&<>
+      <div className="recovery-target"><span className="recovery-icon"><ShieldCheck size={24}/></span><div><small>恢复到当前账号</small><strong>{q.data.account.name}</strong></div><span>{q.data.items.length>0?`${q.data.items.length} 项待新建恢复`:q.data.skipped_pending>0?`${q.data.skipped_pending} 项由原任务处理`:'0 项待恢复'}</span></div>
+      {q.data.items.length>0&&<div className="recovery-estimate"><span>预计预留空间 <strong>{bytes(q.data.transfer_bytes)}</strong></span><span>账号剩余空间 <strong>{bytes(q.data.available)}</strong></span></div>}
+      {q.data.capacity_warning&&<div className="warning-box"><AlertCircle size={17}/>预计空间不足，可先减少选择范围或切换账号。</div>}
+      {q.data.skipped_pending>0&&<section className="recovery-pending" aria-label="已有传输或恢复任务">
+        <p className="muted" role="status">{q.data.skipped_pending} 项资源已有传输或恢复任务，仍由原任务处理。请查看进度或继续原任务，无需重复新建恢复。</p>
+        {pending.map(job=><article className="recovery-pending-job" key={job.id}>
+          <div className="recovery-pending-heading"><strong>{job.title}</strong><Status state={job.state}/></div>
+          <div className="recovery-pending-meta"><JobLane job={job}/><span>{Math.round(job.progress)}%</span></div>
+          {job.message&&<p>{job.message}</p>}
+          <div className="recovery-pending-actions"><button type="button" className="text-button" onClick={()=>setDetail(job.id)} aria-label={`查看任务 ${job.title}`}>查看任务<ArrowRight size={14}/></button>
+            {['queued','running','waiting','retry'].includes(job.state)?<button type="button" className="button secondary small" disabled={controlsBusy} onClick={()=>void control(job,'pause')} aria-label={`暂停 ${job.title}`}>{pausing===job.id?<LoaderCircle size={14} className="spin"/>:<Pause size={14}/>}暂停</button>
+              :['paused','partial','failed','attention'].includes(job.state)?<button type="button" className="button secondary small" disabled={controlsBusy} onClick={()=>void control(job,'retry')} aria-label={`${job.state==='paused'?'继续':'重试'} ${job.title}`}>{retry.busyJob===job.id?<LoaderCircle size={14} className="spin"/>:job.state==='paused'?<Play size={14}/>:<RotateCcw size={14}/>} {job.state==='paused'?'继续原任务':'重试原任务'}</button>
+              :<span className="muted">正在重新核对资源状态…</span>}
+          </div>
+        </article>)}
+        {!pending.length&&<button type="button" className="text-button" onClick={()=>{onClose();navigate('/tasks')}}>前往传输任务<ArrowRight size={14}/></button>}
+      </section>}
+      <div className="recovery-preview-list">{q.data.items.map(item=><div key={item.id}><span><strong>{item.name}</strong><small>{item.path}</small></span><span className={item.conflict?'danger-text':''}>{item.conflict?'内容冲突 · 需处理':methods[item.method]}</span></div>)}{!q.data.items.length&&!q.data.skipped_pending&&<p className="muted">所选资源目前无需恢复。</p>}</div>
+      {q.data.items.length>0&&<><RecoveryLanesNote/><p className="recovery-disclaimer">空间按完整来源批次估算；回收站还原或秒传命中时可能更少。执行时会再次核对冲突。来源失效或云端没有可用副本时，可能无法恢复文件内容。失败项目会保留记录，不会覆盖同名的其他文件。</p></>}
+    </>}</div>
+    <div className="modal-actions"><button className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={busy||controlsBusy||!q.data?.items.length} onClick={start}>{busy?<LoaderCircle size={17} className="spin"/>:<RotateCcw size={17}/>}确认开始恢复</button></div>
+  </Modal><TaskDetail jobID={detail} onClose={()=>{setDetail(null);void q.refetch()}}/></>
 }
 
 // Vidstack's native provider list omits several browser-supported containers.

@@ -662,6 +662,11 @@ func (a *App) filesList(w http.ResponseWriter, r *http.Request) error {
 			return e
 		}
 		if !n.Trashed {
+			if operation, ok := operations[n.ID]; ok && operation.Kind == "recover" && q.Get("view") == "missing" {
+				// A failed or paused recovery retains its resumable work. Give the
+				// recovery center a route to that task without hiding missing state.
+				n.Transfer = &operation.FileTransfer
+			}
 			if operation, ok := operations[n.ID]; ok && operation.Kind != "recover" {
 				if operation.Kind == "sync" {
 					// Real folders remain navigable while their remote creation is
@@ -1301,6 +1306,10 @@ func (a *App) recoveryPreview(w http.ResponseWriter, r *http.Request) error {
 		return e
 	}
 	skipped := 0
+	pendingJobs := []Job{}
+	pendingIndex := map[string]int{}
+	pendingProblems := map[string]map[string]string{}
+	pendingReasons := map[string][]string{}
 	var total int64
 	sourceSizes := map[string]int64{}
 	var standaloneBytes int64
@@ -1309,8 +1318,24 @@ func (a *App) recoveryPreview(w http.ResponseWriter, r *http.Request) error {
 		if n.Trashed || n.State == "present" {
 			continue
 		}
-		if _, ok := operations[n.ID]; ok {
+		if operation, ok := operations[n.ID]; ok {
 			skipped++
+			if _, seen := pendingIndex[operation.JobID]; !seen {
+				job, err := a.Store.Job(operation.JobID)
+				if err != nil {
+					return err
+				}
+				var data JobData
+				if err = json.Unmarshal(job.Data, &data); err != nil {
+					return err
+				}
+				pendingIndex[job.ID] = len(pendingJobs)
+				pendingProblems[job.ID] = data.Problems
+				pendingJobs = append(pendingJobs, job)
+			}
+			if reason := pendingProblems[operation.JobID][n.ID]; reason != "" {
+				pendingReasons[operation.JobID] = append(pendingReasons[operation.JobID], n.Name+"："+reason)
+			}
 			continue
 		}
 		method := "source"
@@ -1332,6 +1357,16 @@ func (a *App) recoveryPreview(w http.ResponseWriter, r *http.Request) error {
 		}
 		items = append(items, map[string]any{"id": n.ID, "name": n.Name, "path": p, "state": n.State, "size": n.Size, "method": method, "has_source": n.SourceID != "", "conflict": n.State == "conflict"})
 	}
+	for i := range pendingJobs {
+		if reasons := pendingReasons[pendingJobs[i].ID]; len(reasons) > 0 {
+			// Surface the selected files' actual failures instead of only the
+			// aggregate "1 item needs attention". Never serialize upload data.
+			pendingJobs[i].Message = strings.Join(reasons[:min(len(reasons), 3)], "\n")
+			if len(reasons) > 3 {
+				pendingJobs[i].Message += fmt.Sprintf("\n另有 %d 项问题，可查看任务详情", len(reasons)-3)
+			}
+		}
+	}
 	transferBytes := standaloneBytes
 	for sourceID, selectedSize := range sourceSizes {
 		source, err := a.Store.Source(sourceID)
@@ -1346,7 +1381,7 @@ func (a *App) recoveryPreview(w http.ResponseWriter, r *http.Request) error {
 		}
 		transferBytes += max(selectedSize, batchSize)
 	}
-	writeJSON(w, 200, map[string]any{"account": ac, "items": items, "skipped_pending": skipped, "bytes": total, "transfer_bytes": transferBytes, "available": max(int64(0), ac.Limit-ac.Used), "capacity_warning": ac.Limit > 0 && transferBytes > ac.Limit-ac.Used})
+	writeJSON(w, 200, map[string]any{"account": ac, "items": items, "skipped_pending": skipped, "pending_jobs": pendingJobs, "bytes": total, "transfer_bytes": transferBytes, "available": max(int64(0), ac.Limit-ac.Used), "capacity_warning": ac.Limit > 0 && transferBytes > ac.Limit-ac.Used})
 	return nil
 }
 func (a *App) recoveryCreate(w http.ResponseWriter, r *http.Request) error {

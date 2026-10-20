@@ -2,7 +2,7 @@ import { Cloud, HardDriveDownload } from 'lucide-react'
 import type { Job } from './api'
 import './job-lane.css'
 
-export function JobLane({ job }: { job: Job }) {
+export function JobLane({ job }: { job: Pick<Job, 'kind' | 'lane'> }) {
   const lane = job.lane || (job.kind === 'teldrive_upload' ? 'teldrive' : undefined)
   if (!lane) return null
   return <span className={`job-lane ${lane}`} title={lane === 'teldrive'

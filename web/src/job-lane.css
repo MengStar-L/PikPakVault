@@ -3,4 +3,15 @@
 .job-lane svg{flex-shrink:0}
 .task-detail-status{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 .recovery-lanes-note{margin:12px 0;padding:10px 12px;border-radius:8px;background:#f4f7fd;color:#7487a5;font-size:11px;line-height:1.8;overflow-wrap:anywhere}
+.recovery-pending{margin:14px 0;min-width:0}
+.recovery-pending>p{font-size:11px;line-height:1.8}
+.recovery-pending-job{padding:12px;border:1px solid #e8edf7;border-radius:9px;background:#fafcff;margin-top:9px;min-width:0}
+.recovery-pending-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.recovery-pending-heading strong{font-size:12px;font-weight:500;line-height:1.7;overflow-wrap:anywhere;min-width:0}
+.recovery-pending-meta,.recovery-pending-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.recovery-pending-meta>span:not(.job-lane){color:#8a9bb5;font-size:10px}
+.recovery-pending-job>p{margin:8px 0 0;font-size:11px;line-height:1.7;color:#8b6a73;overflow-wrap:anywhere}
+.recovery-pending-actions{justify-content:flex-end}
+.recovery-pending-actions .text-button{margin-right:auto;font-size:11px}
+.recovery-pending-actions .muted{font-size:10px}
 @media(max-width:640px){.job-lane{font-size:9px}.recovery-lanes-note{font-size:10px}}
