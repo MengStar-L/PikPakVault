@@ -95,6 +95,9 @@ func (a *App) partitionRecovery(j *Job) error {
 		cloud := recoveryLaneData(data, "cloud", cloudIDs, nodeLanes, sources)
 		td := recoveryLaneData(data, "teldrive", telDriveIDs, nodeLanes, sources)
 		cloud.MonitorID = ""
+		// A previous successful TelDrive file may have left its path in Note.
+		// The new cloud task must report its own result instead.
+		cloud.Note = ""
 		child := current
 		child.ID = ID()
 		child.Lane = "cloud"

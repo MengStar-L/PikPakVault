@@ -66,6 +66,7 @@ func TestRecoveryPartitionKeepsSessionsBatchesAndResourceOwnership(t *testing.T)
 	}
 	data := JobData{
 		NodeIDs: []string{"parent"}, MonitorID: "monitor",
+		Note: "TelDrive 文件已保存至 /old/file.mp4",
 		Uploads: map[string]*TelDriveUpload{
 			"td-a":       {Secret: secret, RemoteID: "upload-file", Attempted: true, Polls: 3},
 			"deleted-td": {Secret: secret, RemoteID: "orphan-upload"},
@@ -126,7 +127,7 @@ func TestRecoveryPartitionKeepsSessionsBatchesAndResourceOwnership(t *testing.T)
 		}
 	}
 	cloud := recoveryJobData(t, child)
-	if cloud.RecoveryLane != "cloud" || !cloud.ExactNodes || cloud.OperationID != original.ID || cloud.MonitorID != "" {
+	if cloud.RecoveryLane != "cloud" || !cloud.ExactNodes || cloud.OperationID != original.ID || cloud.MonitorID != "" || cloud.Note != "" {
 		t.Fatal("cloud lane metadata lost", cloud)
 	}
 	if !reflect.DeepEqual(cloud.NodeIDs, []string{"cloud-a", "cloud-b", "parent"}) || len(cloud.Uploads) != 0 ||
