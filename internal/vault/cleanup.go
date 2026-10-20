@@ -14,7 +14,7 @@ import (
 func (a *App) scheduleCleanup() {
 	account := a.active()
 	ac, err := a.Store.Account(account)
-	if err != nil || ac.Status != "ready" {
+	if err != nil || !accountStatusAllows(ac.Status, "cleanup") {
 		return
 	}
 	last, _ := strconv.ParseInt(a.Store.Get("cleanup_check:"+account), 10, 64)

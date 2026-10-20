@@ -334,7 +334,7 @@ func (a *App) rssCheck(w http.ResponseWriter, r *http.Request) error {
 	defer a.gate.RUnlock()
 	ac, err := a.Store.Account(a.active())
 	if err != nil || ac.Status != "ready" {
-		return fail(409, "请先连接并验证当前 PikPak 账号")
+		return a.accountFailure(a.active())
 	}
 	j, err := a.newRSSCheck(r.PathValue("id"), ac.ID, true)
 	if err != nil {

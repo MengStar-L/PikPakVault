@@ -283,6 +283,9 @@ func (a *App) thumbnail(w http.ResponseWriter, r *http.Request) error {
 	// Existing links usually remain valid for many requests. Refresh metadata
 	// only when absent or when the CDN reports an expired/missing link.
 	refresh := func() (string, error) {
+		if !a.accountJobAllowed(account, "scan") {
+			return "", a.accountFailure(account)
+		}
 		c, err := a.client(account)
 		if err != nil {
 			return "", err

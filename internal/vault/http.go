@@ -74,7 +74,7 @@ func (a *App) endpoint(fn func(http.ResponseWriter, *http.Request) error) http.H
 				msg = at.message
 			} else if errors.As(e, &api) {
 				status = 502
-				writeJSON(w, status, map[string]any{"error": api.Error(), "code": api.Code, "endpoint": api.Endpoint, "upstream_status": api.Status, "verification_url": api.VerificationURL})
+				writeJSON(w, status, map[string]any{"error": friendlyUpstreamError(api), "code": api.Code, "endpoint": api.Endpoint, "upstream_status": api.Status, "verification_url": api.VerificationURL})
 				return
 			} else if errors.Is(e, errPaused) {
 				status = 409
@@ -84,6 +84,13 @@ func (a *App) endpoint(fn func(http.ResponseWriter, *http.Request) error) http.H
 		}
 	}
 }
+func friendlyUpstreamError(err *pikpak.APIError) string {
+	if status, message, _ := classifyAccountError(err); status != "" {
+		return message
+	}
+	return err.Error()
+}
+
 func passwordHash(password string) string {
 	salt := make([]byte, 16)
 	_, _ = rand.Read(salt)
@@ -369,6 +376,11 @@ func (a *App) accountsList(w http.ResponseWriter, r *http.Request) error {
 	if e != nil {
 		return e
 	}
+	for i := range accounts {
+		if e = a.Store.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM jobs WHERE account_id=? AND kind='verify' AND state IN ('queued','running','waiting','retry'))`, accounts[i].ID).Scan(&accounts[i].VerificationPending); e != nil {
+			return e
+		}
+	}
 	writeJSON(w, 200, map[string]any{"accounts": accounts, "active_id": a.active()})
 	return nil
 }
@@ -406,7 +418,7 @@ func (a *App) accountCreate(w http.ResponseWriter, r *http.Request) error {
 	if e != nil {
 		return e
 	}
-	j, e := a.Store.NewJob(id, "verify", "Verify account · "+v.Name, JobData{})
+	j, e := a.Store.NewJob(id, "verify", "检查账号 · "+v.Name, JobData{})
 	if e != nil {
 		return e
 	}
@@ -456,6 +468,14 @@ func (a *App) accountUpdate(w http.ResponseWriter, r *http.Request) error {
 	if ac.Identity != "" && me.Sub != ac.Identity {
 		return fail(409, "These credentials belong to another account; add a new account instead")
 	}
+	quota, e := c.Quota(r.Context())
+	if e != nil {
+		return e
+	}
+	status, message := "ready", ""
+	if !quota.Unlimited && quota.Limit > 0 && quota.Usage >= quota.Limit {
+		status, message = "quota_exceeded", accountErrorMessage(Account{Status: "quota_exceeded"})
+	}
 	secret, e := a.Store.Seal(c.Credentials)
 	if e != nil {
 		return e
@@ -463,11 +483,23 @@ func (a *App) accountUpdate(w http.ResponseWriter, r *http.Request) error {
 	a.gate.Lock()
 	defer a.gate.Unlock()
 	a.clientsMu.Lock()
-	_, e = a.Store.DB.Exec(`UPDATE accounts SET name=?,secret=?,status='ready',error='',verification_url='' WHERE id=?`, v.Name, secret, id)
-	delete(a.clients, id)
+	result, e := a.Store.DB.Exec(`UPDATE accounts SET name=?,secret=?,identity=?,status=?,error=?,verification_url='',quota_limit=?,quota_used=? WHERE id=? AND secret=?`, v.Name, secret, me.Sub, status, message, int64(quota.Limit), int64(quota.Usage), id, ac.Secret)
+	if e == nil {
+		if count, err := result.RowsAffected(); err != nil {
+			e = err
+		} else if count != 1 {
+			e = fail(409, "账号凭据已经变化，请刷新后重试")
+		}
+	}
+	if e == nil {
+		delete(a.clients, id)
+	}
 	a.clientsMu.Unlock()
 	if e != nil {
 		return e
+	}
+	if status == "quota_exceeded" {
+		a.observeAccountErrorIfCurrent(id, secret, &pikpak.APIError{Code: "quota_exceeded"})
 	}
 	a.Store.Event("account", id)
 	writeJSON(w, 200, map[string]bool{"ok": true})
@@ -502,14 +534,20 @@ func (a *App) accountActivate(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 func (a *App) accountVerify(w http.ResponseWriter, r *http.Request) error {
+	a.jobMu.Lock()
+	defer a.jobMu.Unlock()
 	ac, e := a.Store.Account(r.PathValue("id"))
 	if e != nil {
 		return e
 	}
-	j, e := a.Store.NewJob(ac.ID, "verify", "Verify account · "+ac.Name, JobData{})
+	j, e := jobScan(a.Store.DB.QueryRow(`SELECT `+jobCols+` FROM jobs WHERE account_id=? AND kind='verify' AND state IN ('queued','running','waiting','retry') ORDER BY created LIMIT 1`, ac.ID))
+	if errors.Is(e, sql.ErrNoRows) {
+		j, e = a.Store.NewJob(ac.ID, "verify", "检查账号 · "+ac.Name, JobData{})
+	}
 	if e != nil {
 		return e
 	}
+	a.Store.Event("account", ac.ID)
 	a.notify()
 	writeJSON(w, 202, j)
 	return nil
@@ -676,7 +714,8 @@ func (a *App) target(id string) error {
 	if id == "" {
 		return fail(400, "Select a target folder")
 	}
-	n, e := a.Store.Node(id, a.active())
+	account := a.active()
+	n, e := a.Store.Node(id, account)
 	if e != nil {
 		return e
 	}
@@ -951,7 +990,11 @@ func (a *App) sharePreview(w http.ResponseWriter, r *http.Request) error {
 	if s.Kind != "share" {
 		return fail(400, "Preview is available for PikPak shares")
 	}
-	c, e := a.client(a.active())
+	account := a.active()
+	if !a.accountJobAllowed(account, "scan") {
+		return a.accountFailure(account)
+	}
+	c, e := a.client(account)
 	if e != nil {
 		return e
 	}
@@ -983,7 +1026,7 @@ func (a *App) importCreate(w http.ResponseWriter, r *http.Request) error {
 		return e
 	}
 	if ac.Status != "ready" {
-		return fail(409, "Verify the active account first")
+		return a.accountFailure(account)
 	}
 	sources := []Source{}
 	for i := range v.Items {
@@ -1128,13 +1171,16 @@ func (a *App) jobAction(w http.ResponseWriter, r *http.Request) error {
 		if j.AccountID != a.active() && j.Kind != "verify" {
 			return fail(409, "Switch to this task's account first")
 		}
-		if j.Kind != "verify" {
-			account, err := a.Store.Account(j.AccountID)
-			if err != nil {
-				return err
+		if !a.accountJobAllowed(j.AccountID, j.Kind) {
+			return a.accountFailure(j.AccountID)
+		}
+		if j.Kind == "verify" {
+			var other int
+			if e = a.Store.DB.QueryRow(`SELECT COUNT(*) FROM jobs WHERE account_id=? AND id<>? AND kind='verify' AND state IN ('queued','running','waiting','retry')`, j.AccountID, j.ID).Scan(&other); e != nil {
+				return e
 			}
-			if account.Status != "ready" {
-				return fail(409, "该账号尚未就绪，请在账号管理中完成验证后重试")
+			if other > 0 {
+				return fail(409, "账号检查已在进行，请等待当前检查完成")
 			}
 		}
 		if (j.State == "cancelled" || j.State == "completed") && (j.Kind == "teldrive_upload" || j.Kind == "recover" || (j.Kind == "sync" && d.MonitorID != "")) {
@@ -1210,7 +1256,11 @@ func (a *App) scanCreate(w http.ResponseWriter, r *http.Request) error {
 	if a.active() == "" {
 		return fail(409, "Connect an account first")
 	}
-	j, e := a.Store.NewJob(a.active(), "scan", "Check library availability", JobData{})
+	account := a.active()
+	if !a.accountJobAllowed(account, "scan") {
+		return a.accountFailure(account)
+	}
+	j, e := a.Store.NewJob(account, "scan", "检查资源可用性", JobData{})
 	if e != nil {
 		return e
 	}
@@ -1315,6 +1365,9 @@ func (a *App) recoveryCreate(w http.ResponseWriter, r *http.Request) error {
 	account := a.active()
 	if account == "" {
 		return fail(409, "Connect an account first")
+	}
+	if !a.accountJobAllowed(account, "recover") {
+		return a.accountFailure(account)
 	}
 	if v.AccountID == "" || v.AccountID != account {
 		return fail(409, "The active account changed; preview and confirm recovery again")
@@ -1565,7 +1618,8 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) {
 
 // Stable, root-scoped media entry points never accept an arbitrary upstream URL.
 func (a *App) remoteFile(ctx context.Context, id string) (Node, pikpak.File, error) {
-	n, e := a.Store.Node(id, a.active())
+	account := a.active()
+	n, e := a.Store.Node(id, account)
 	if e != nil {
 		return n, pikpak.File{}, e
 	}
@@ -1575,7 +1629,10 @@ func (a *App) remoteFile(ctx context.Context, id string) (Node, pikpak.File, err
 	if n.RemoteID == "" {
 		return n, pikpak.File{}, fail(409, "Restore this file to the active account first")
 	}
-	c, e := a.client(a.active())
+	if !a.accountJobAllowed(account, "scan") {
+		return n, pikpak.File{}, a.accountFailure(account)
+	}
+	c, e := a.client(account)
 	if e != nil {
 		return n, pikpak.File{}, e
 	}

@@ -1,0 +1,28 @@
+.account-health-alert{display:flex;align-items:center;gap:12px;flex-shrink:0;min-width:0;padding:12px 28px;background:#fffaef;border-bottom:1px solid #f3e4c9;color:#8e6529}
+.account-health-alert.danger{background:#fff4f4;border-color:#f3dadd;color:#a04458}
+.account-health-icon{flex-shrink:0}
+.account-health-copy{min-width:0;flex:1}
+.account-health-copy strong{display:block;font-size:12px;font-weight:600;overflow-wrap:anywhere;line-height:1.6}
+.account-health-copy p{font-size:11px;line-height:1.65;margin-top:2px;overflow-wrap:anywhere;opacity:.9}
+.account-health-actions{display:flex;align-items:center;gap:14px;flex-shrink:0}
+.account-health-actions .text-button{font-size:11px;color:inherit;white-space:nowrap}
+.account-verify.button{min-height:31px;font-size:11px;padding:7px 9px;gap:6px;white-space:nowrap}
+.account-health-alert .account-verify{background:#fff9;border-color:currentColor;color:inherit}
+.account-switch.has-issue .avatar{position:relative;color:#a35a36;background:#fff1e8;box-shadow:0 0 0 1px #f0d9c6}
+.account-switch.has-issue .avatar:after{content:"";position:absolute;width:7px;height:7px;background:#d27855;border:2px solid #fff;border-radius:50%;right:-3px;top:-2px}
+.account-issue-dot{width:6px;height:6px;border-radius:50%;background:#d27855;flex-shrink:0}
+.storage-card .storage-health{display:flex;align-items:center;gap:5px;font-size:10px;line-height:1.5;color:#ac6947;margin-top:6px}
+.storage-card.stale .storage-meter i{background:#c2b4a8}
+.account-capacity .capacity-stale{display:block;font-size:10px;color:#a2794d;margin-top:9px;line-height:1.6}
+.account-card.has-issue{border-color:#efd9cc}
+.account-card.has-issue .account-capacity .storage-meter i{background:#c2b4a8}
+.account-card .account-error{font-size:11px;color:#9b5946;background:#fff7ef}
+.account-card .account-error>svg{flex-shrink:0;margin-top:2px}
+.account-error p{margin:0;line-height:1.7}
+.account-error .account-guidance{margin-top:6px;color:#94694e}
+.account-card-actions{flex-wrap:wrap}
+.account-card-actions .account-verify.button{margin-left:0}
+.status.blocked,.status.auth_required{color:#ac4a61;background:#fff0f2}
+.status.quota_exceeded,.status.error,.status.unverified{color:#987026;background:#fbf5e7}
+@media(max-width:900px){.account-health-alert{padding:10px 22px;gap:10px}}
+@media(max-width:640px){.account-health-alert{padding:10px 17px;align-items:flex-start;flex-wrap:wrap;gap:7px 9px}.account-health-icon{margin-top:2px;width:16px}.account-health-copy{flex-basis:calc(100% - 30px)}.account-health-copy strong{font-size:11px}.account-health-copy p{font-size:10px}.account-health-actions{margin-left:25px;gap:16px;max-width:calc(100% - 25px);flex-wrap:wrap}.account-health-actions .account-verify.button{min-height:29px;padding:5px 8px}.account-card-actions{gap:9px}.account-card-actions .text-button{margin-right:auto}.account-card-actions .account-verify.button{font-size:10px;padding:7px}.account-card-actions>.button:last-child{margin-left:0}}

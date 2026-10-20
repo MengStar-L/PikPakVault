@@ -220,17 +220,18 @@ func (s *Store) Event(kind string, v any) {
 }
 
 type Account struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Identity        string `json:"identity"`
-	Secret          string `json:"-"`
-	RootID          string `json:"root_id"`
-	Status          string `json:"status"`
-	Error           string `json:"error"`
-	VerificationURL string `json:"verification_url"`
-	Limit           int64  `json:"quota_limit"`
-	Used            int64  `json:"quota_used"`
-	Created         int64  `json:"created"`
+	VerificationPending bool   `json:"verification_pending"`
+	ID                  string `json:"id"`
+	Name                string `json:"name"`
+	Identity            string `json:"identity"`
+	Secret              string `json:"-"`
+	RootID              string `json:"root_id"`
+	Status              string `json:"status"`
+	Error               string `json:"error"`
+	VerificationURL     string `json:"verification_url"`
+	Limit               int64  `json:"quota_limit"`
+	Used                int64  `json:"quota_used"`
+	Created             int64  `json:"created"`
 }
 
 const accountCols = `id,name,identity,secret,root_id,status,error,verification_url,quota_limit,quota_used,created`

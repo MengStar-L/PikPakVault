@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,11 +28,17 @@ const packageName = "mypikpak.com"
 var salts = []string{"C9qPpZLN8ucRTaTiUMWYS9cQvWOE", "+r6CQVxjzJV6LCV", "F", "pFJRC", "9WXYIDGrwTCz2OiVlgZa90qpECPD6olt", "/750aCr4lm/Sly/c", "RB+DT/gZCrbV", "", "CyLsf7hdkIRxRm215hl", "7xHvLi2tOYP0Y92b", "ZGTXXxu8E/MIWaEDB+Sm/", "1UI3", "E7fP5Pfijd+7K+t6Tg/NhuLq0eEUVChpJSkrKxpO", "ihtqpG6FMt65+Xk+tWUH2", "NhXXU9rg4XXdzo7u5o"}
 
 type Client struct {
-	HTTP            *http.Client
-	DriveURL        string
-	UserURL         string
-	Credentials     Credentials
-	Save            func(Credentials) error
+	HTTP        *http.Client
+	DriveURL    string
+	UserURL     string
+	Credentials Credentials
+	Save        func(Credentials) error
+	// OnError observes the final failure of a call after authentication retries.
+	// It runs with mu held; it must not call back into this Client.
+	OnError func(error)
+	// BeforeRequest rechecks whether queued requests may proceed after taking mu.
+	// It runs before any authentication request and must not call this Client.
+	BeforeRequest   func(context.Context) error
 	BeforeWrite     func() (func(), error)
 	RequestInterval time.Duration
 	WriteInterval   time.Duration
@@ -55,8 +62,11 @@ func (c *Client) persist() error {
 	}
 	return nil
 }
-func (c *Client) redact(s string) string {
-	for _, v := range []string{c.Credentials.Username, c.Credentials.Password, c.Credentials.AccessToken, c.Credentials.RefreshToken, c.Credentials.CaptchaToken} {
+func (c *Client) redact(s string, extra ...string) string {
+	secrets := append([]string{c.Credentials.Username, c.Credentials.Password, c.Credentials.AccessToken, c.Credentials.RefreshToken, c.Credentials.CaptchaToken}, extra...)
+	// Redact longer overlapping secrets first, before truncation can cut them.
+	sort.SliceStable(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	for _, v := range secrets {
 		if v != "" {
 			s = strings.ReplaceAll(s, v, "[redacted]")
 		}
@@ -107,26 +117,26 @@ func (c *Client) raw(ctx context.Context, host, method, path string, q url.Value
 	if err != nil {
 		return &APIError{Endpoint: path, Code: "response_interrupted", Message: "response incomplete"}
 	}
-	var envelope struct {
-		Error string `json:"error"`
-	}
+	var envelope errorEnvelope
 	_ = json.Unmarshal(b, &envelope)
-	if resp.StatusCode >= 400 || envelope.Error != "" {
+	if resp.StatusCode >= 400 || envelope.code() != "" {
 		e := DecodeError(b, resp.StatusCode, path)
-		e.Message = c.redact(e.Message)
 		// Upstream errors can echo submitted URLs and extraction codes.
+		var privateValues []string
 		if bodyMap, ok := body.(map[string]any); ok {
 			for _, key := range []string{"pass_code", "pass_code_token"} {
 				if value, ok := bodyMap[key].(string); ok && value != "" {
-					e.Message = strings.ReplaceAll(e.Message, value, "[redacted]")
+					privateValues = append(privateValues, value)
 				}
 			}
 		}
 		for _, key := range []string{"pass_code", "pass_code_token"} {
 			if v := q.Get(key); v != "" {
-				e.Message = strings.ReplaceAll(e.Message, v, "[redacted]")
+				privateValues = append(privateValues, v)
 			}
 		}
+		e.Code = c.redact(e.Code, privateValues...)
+		e.Message = c.redact(e.Message, privateValues...)
 		e.RetryAfter, _ = strconv.Atoi(resp.Header.Get("Retry-After"))
 		if stamp, err := http.ParseTime(resp.Header.Get("Retry-After")); err == nil {
 			e.RetryAfter = max(e.RetryAfter, int(time.Until(stamp).Seconds())+1)
@@ -213,7 +223,7 @@ func (c *Client) login(ctx context.Context) error {
 	var err error
 	if c.Credentials.RefreshToken != "" {
 		err = c.raw(ctx, c.UserURL, "POST", "/v1/auth/token", nil, map[string]any{"client_id": clientID, "client_secret": clientSecret, "grant_type": "refresh_token", "refresh_token": c.Credentials.RefreshToken}, &res)
-		if err != nil && (Temporary(err) || c.Credentials.Password == "") {
+		if err != nil && (Temporary(err) || terminalLoginFailure(err) || c.Credentials.Password == "") {
 			return err
 		}
 	}
@@ -245,9 +255,37 @@ func (c *Client) login(ctx context.Context) error {
 	c.Credentials.Expiry = time.Now().Unix() + res.Expires
 	return c.persist()
 }
-func (c *Client) call(ctx context.Context, host, method, path string, q url.Values, body, out any) error {
+
+// These explicit account restrictions cannot be repaired by retrying the same
+// credentials. A generic 403 is deliberately not treated as an account ban.
+func terminalLoginFailure(err error) bool {
+	var e *APIError
+	if !errors.As(err, &e) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(e.Code)) {
+	case "user_blocked", "account_blocked", "user_frozen", "account_frozen",
+		"user_disabled", "account_disabled", "user_suspended", "account_suspended",
+		"user_banned", "account_banned", "verification_required":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) call(ctx context.Context, host, method, path string, q url.Values, body, out any) (result error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer func() {
+		if result != nil && c.OnError != nil {
+			c.OnError(result)
+		}
+	}()
+	if c.BeforeRequest != nil {
+		if err := c.BeforeRequest(ctx); err != nil {
+			return err
+		}
+	}
 	if c.Credentials.AccessToken == "" || (c.Credentials.Expiry > 0 && c.Credentials.Expiry < time.Now().Unix()+30) {
 		if err := c.login(ctx); err != nil {
 			return err
@@ -272,7 +310,7 @@ func (c *Client) call(ctx context.Context, host, method, path string, q url.Valu
 			unlock()
 		}
 		if e, ok := err.(*APIError); ok && attempt == 0 {
-			if e.Status == 401 || e.Code == "unauthenticated" {
+			if !terminalLoginFailure(err) && (e.Status == 401 || e.Code == "unauthenticated") {
 				if err = c.login(ctx); err != nil {
 					return err
 				}

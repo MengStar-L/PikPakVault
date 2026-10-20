@@ -243,7 +243,7 @@ func (a *App) telDriveSync(w http.ResponseWriter, r *http.Request) error {
 	defer a.gate.RUnlock()
 	ac, e := a.Store.Account(a.active())
 	if e != nil || ac.Status != "ready" {
-		return fail(409, "请先连接并验证当前 PikPak 账号")
+		return a.accountFailure(a.active())
 	}
 	m, e := a.Store.monitor(r.PathValue("id"))
 	if e != nil {

@@ -339,7 +339,7 @@ func TestVerificationAndRateLimitProtectOtherQueuedJobs(t *testing.T) {
 			other, _ = a.Store.Job(other.ID)
 			if status == 401 {
 				ac, _ := a.Store.Account("a")
-				if ac.Status != "verification_required" || j.State != "paused" || other.State != "paused" {
+				if ac.Status != "auth_required" || j.State != "paused" || other.State != "paused" {
 					t.Fatal(ac.Status, j.State, other.State)
 				}
 			} else if other.NextRun < now()+175 || j.NextRun < now()+175 {

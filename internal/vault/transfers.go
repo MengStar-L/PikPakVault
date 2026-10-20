@@ -169,6 +169,7 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 	}
 	taskPending, taskFailed := false, false
 	var taskErr error
+	var accountTaskErr error
 	if t.TaskID != "" || ((s.Kind == "magnet" || s.Kind == "url") && t.Mode == "direct" && len(t.OutputIDs) == 0) {
 		tasks, err := transferTasks(ctx, c, s.Kind, t.TaskID)
 		if err != nil {
@@ -217,6 +218,14 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 				} // collect IDs even when progress is stuck
 				taskPending = task.Phase != "PHASE_TYPE_COMPLETE"
 				taskFailed = task.Phase == "PHASE_TYPE_ERROR"
+				if taskFailed {
+					accountTaskErr = taskAccountError(task)
+					if accountTaskErr != nil {
+						if current, err := a.currentClientAccount(j.AccountID, c); err == nil {
+							a.observeAccountErrorIfCurrent(j.AccountID, current.Secret, accountTaskErr)
+						}
+					}
+				}
 				j.Progress = max(j.Progress, min(task.Progress, 95))
 			}
 			if t.TaskID != "" && !found {
@@ -226,6 +235,9 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 	}
 	if s.Kind == "share" && t.StageID == "" && len(t.OutputIDs) == 0 {
 		if taskFailed {
+			if accountTaskErr != nil {
+				return nil, accountTaskErr
+			}
 			return nil, block("PikPak 分享转存任务失败，尚无可核验的保存结果，请检查来源及账号空间")
 		}
 		j.Message = "正在重新核对目标目录与分享清单"
@@ -290,6 +302,9 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 			return nil, taskErr
 		}
 		if taskFailed {
+			if accountTaskErr != nil {
+				return nil, accountTaskErr
+			}
 			return nil, block("PikPak 任务失败，尚无可核验文件，请检查来源")
 		}
 		if now()-t.Started < 120 {
@@ -314,6 +329,9 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 		var p *pending
 		if errors.As(err, &p) {
 			if taskFailed {
+				if accountTaskErr != nil {
+					return nil, accountTaskErr
+				}
 				return nil, block("PikPak 任务失败，结果文件仍不完整，请检查来源")
 			}
 			return nil, t.wait(p.message)
@@ -327,6 +345,9 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 	if len(expected) > 0 && !matchesManifest(entries, expected) {
 		t.Fingerprint, t.StableSince = "", 0
 		if taskFailed {
+			if accountTaskErr != nil {
+				return nil, accountTaskErr
+			}
 			return nil, block("PikPak 任务失败，已保存文件与来源清单不一致")
 		}
 		return nil, t.wait("已找到结果，正在等待全部文件与来源清单一致")
@@ -513,4 +534,23 @@ func treeFingerprint(entries []RemoteEntry) string {
 	sort.Strings(lines)
 	hash := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	return hex.EncodeToString(hash[:])
+}
+
+// Task status is a successful API response even when the contained operation
+// failed. Interpret only explicit account codes, not arbitrary source failures.
+func taskAccountError(task pikpak.Task) error {
+	for _, detail := range []string{task.Params.ErrorDetail, task.Message} {
+		code := strings.TrimSpace(detail)
+		if code == "" {
+			continue
+		}
+		up := &pikpak.APIError{Endpoint: "/drive/v1/tasks", Code: strings.ReplaceAll(strings.ToLower(code), " ", "_")}
+		if strings.HasPrefix(code, "{") {
+			up = pikpak.DecodeError([]byte(code), 0, "/drive/v1/tasks")
+		}
+		if status, _, _ := classifyAccountError(up); status != "" {
+			return up
+		}
+	}
+	return nil
 }

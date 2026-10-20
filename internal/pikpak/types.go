@@ -153,15 +153,42 @@ type Provider interface {
 	Instant(context.Context, string, File) (Transfer, error)
 }
 
+type errorEnvelope struct {
+	Error     json.RawMessage `json:"error"`
+	Message   string          `json:"error_description"`
+	ErrorCode json.RawMessage `json:"error_code"`
+}
+
+func errorCodeText(value json.RawMessage) string {
+	var text string
+	if json.Unmarshal(value, &text) == nil {
+		text = strings.TrimSpace(text)
+		if text != "0" {
+			return text
+		}
+		return ""
+	}
+	// Preserve unknown numeric codes for diagnosis without guessing their meaning.
+	var number json.Number
+	if json.Unmarshal(value, &number) == nil && number != "" && number != "0" {
+		return string(number)
+	}
+	return ""
+}
+
+func (e errorEnvelope) code() string {
+	if code := errorCodeText(e.Error); code != "" {
+		return code
+	}
+	return errorCodeText(e.ErrorCode)
+}
+
 func DecodeError(b []byte, status int, endpoint string) *APIError {
-	var body struct {
-		Code      string          `json:"error"`
-		Message   string          `json:"error_description"`
-		ErrorCode json.RawMessage `json:"error_code"`
-	}
+	var body errorEnvelope
 	_ = json.Unmarshal(b, &body)
-	if body.Code == "" {
-		body.Code = "upstream_error"
+	code := body.code()
+	if code == "" {
+		code = "upstream_error"
 	}
-	return &APIError{Status: status, Endpoint: endpoint, Code: body.Code, Message: body.Message}
+	return &APIError{Status: status, Endpoint: endpoint, Code: code, Message: body.Message}
 }

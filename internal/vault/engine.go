@@ -71,8 +71,17 @@ func (a *App) client(id string) (pikpak.Provider, error) {
 		creds.UserID = ac.Identity
 	}
 	c := pikpak.New(creds)
+	var credentialMu sync.Mutex
 	expectedSecret := ac.Secret
+	c.OnError = func(err error) {
+		credentialMu.Lock()
+		secret := expectedSecret
+		credentialMu.Unlock()
+		a.observeAccountErrorIfCurrent(id, secret, err)
+	}
 	c.Save = func(v pikpak.Credentials) error {
+		credentialMu.Lock()
+		defer credentialMu.Unlock()
 		secret, e := a.Store.Seal(v)
 		if e != nil {
 			return e
@@ -91,14 +100,30 @@ func (a *App) client(id string) (pikpak.Provider, error) {
 		expectedSecret = secret
 		return nil
 	}
+	c.BeforeRequest = func(ctx context.Context) error {
+		credentialMu.Lock()
+		current, e := a.Store.Account(id)
+		credentialsMatch := e == nil && current.Secret == expectedSecret
+		credentialMu.Unlock()
+		if !credentialsMatch {
+			return errPaused
+		}
+		if ctx.Value(accountProbeKey{}) == id || current.Status == "ready" || current.Status == "quota_exceeded" {
+			return nil
+		}
+		return block(accountErrorMessage(current))
+	}
 	c.BeforeWrite = func() (func(), error) {
 		a.gate.RLock()
 		if a.active() != id {
 			a.gate.RUnlock()
 			return nil, errPaused
 		}
+		credentialMu.Lock()
 		current, e := a.Store.Account(id)
-		if e != nil || current.Secret != expectedSecret {
+		credentialsMatch := e == nil && current.Secret == expectedSecret
+		credentialMu.Unlock()
+		if !credentialsMatch {
 			a.gate.RUnlock()
 			return nil, block("Account credentials changed; this request was paused")
 		}
@@ -205,6 +230,9 @@ func (a *App) checkpoint(j *Job, d *JobData) error {
 	if j.AccountID != a.active() && j.Kind != "verify" {
 		return errPaused
 	}
+	if ac, err := a.Store.Account(j.AccountID); err == nil && !accountStatusAllows(ac.Status, j.Kind) {
+		return block(accountErrorMessage(ac))
+	}
 	return a.Store.SaveJob(j, d)
 }
 func (a *App) Run(ctx context.Context) {
@@ -237,7 +265,7 @@ func (a *App) Run(ctx context.Context) {
 		a.scheduleTelDrive()
 		a.scheduleRSS()
 		a.dataMu.RUnlock()
-		j, e := jobScan(a.Store.DB.QueryRow(`SELECT `+jobCols+` FROM jobs WHERE state IN ('queued','waiting','retry') AND next_run<=? AND (kind='verify' OR (account_id=? AND EXISTS (SELECT 1 FROM accounts WHERE accounts.id=jobs.account_id AND status='ready'))) ORDER BY CASE WHEN kind='verify' THEN 0 WHEN kind='root' THEN 1 WHEN kind='cleanup' THEN 3 ELSE 2 END,next_run,created,id LIMIT 1`, now(), a.active()))
+		j, e := jobScan(a.Store.DB.QueryRow(`SELECT `+jobCols+` FROM jobs WHERE state IN ('queued','waiting','retry') AND next_run<=? AND (kind='verify' OR (account_id=? AND EXISTS (SELECT 1 FROM accounts WHERE accounts.id=jobs.account_id AND (status='ready' OR (status='quota_exceeded' AND jobs.kind IN ('scan','trash','sync','cleanup')))))) ORDER BY CASE WHEN kind='verify' THEN 0 WHEN kind='root' THEN 1 WHEN kind='cleanup' THEN 3 ELSE 2 END,next_run,created,id LIMIT 1`, now(), a.active()))
 		if e != nil {
 			continue
 		}
@@ -247,7 +275,7 @@ func (a *App) Run(ctx context.Context) {
 func (a *App) scheduleScan() {
 	minutes, _ := strconv.Atoi(a.Store.Get("scan_minutes"))
 	last, _ := strconv.ParseInt(a.Store.Get("last_auto_scan"), 10, 64)
-	if minutes <= 0 || a.active() == "" || now()-last < int64(minutes)*60 {
+	if minutes <= 0 || !a.accountJobAllowed(a.active(), "scan") || now()-last < int64(minutes)*60 {
 		return
 	}
 	var count int
@@ -274,6 +302,14 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 		return
 	}
 	*j = current
+	startAccount, accountErr := a.Store.Account(j.AccountID)
+	if accountErr == nil && !accountStatusAllows(startAccount.Status, j.Kind) {
+		j.State, j.Message = "paused", accountErrorMessage(startAccount)
+		_ = a.Store.SaveJob(j, nil)
+		a.jobMu.Unlock()
+		a.Store.Event("job", map[string]string{"id": j.ID, "state": j.State})
+		return
+	}
 	j.State = "running"
 	j.Message = ""
 	if e := a.Store.SaveJob(j, nil); e != nil {
@@ -282,10 +318,10 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 	}
 	a.jobMu.Unlock()
 	var d JobData
+	var c pikpak.Provider
 	e = json.Unmarshal(j.Data, &d)
 	d.init()
 	if e == nil {
-		var c pikpak.Provider
 		c, e = a.client(j.AccountID)
 		if e == nil {
 			switch j.Kind {
@@ -314,6 +350,25 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 			}
 		}
 	}
+	// Client callbacks also catch failures hidden by recovery fallbacks. Observe
+	// final/synthetic errors here too, without applying a stale credential result.
+	if e != nil {
+		failureSecret := startAccount.Secret
+		staleClient := false
+		if a.Factory == nil && c != nil {
+			if latest, err := a.currentClientAccount(j.AccountID, c); err == nil {
+				failureSecret = latest.Secret
+			} else {
+				staleClient = true
+			}
+		}
+		if !staleClient {
+			a.observeAccountErrorIfCurrent(j.AccountID, failureSecret, e)
+			if j.Kind == "verify" {
+				a.observeVerificationFailure(j.AccountID, failureSecret, e)
+			}
+		}
+	}
 	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
 	current, ce := a.Store.Job(j.ID)
@@ -326,9 +381,17 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 	} else if e != nil {
 		var p *pending
 		var at *attention
+		accountStatus, accountMessage, _ := classifyAccountError(e)
 		switch {
 		case errors.Is(e, context.Canceled):
 			j.State, j.Message = "queued", "服务停止，重启后先核对已提交结果"
+		case accountStatus != "":
+			j.State, j.Message = "paused", accountMessage
+		case j.Kind == "verify":
+			j.State, j.Message = "failed", "账号验证未完成，请检查网络和账号连接后重试"
+		case !a.accountJobAllowed(j.AccountID, j.Kind):
+			ac, _ := a.Store.Account(j.AccountID)
+			j.State, j.Message = "paused", accountErrorMessage(ac)
 		case errors.As(e, &p):
 			j.State = "waiting"
 			j.NextRun = now() + p.delay
@@ -351,12 +414,6 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 			j.Message = e.Error()
 		}
 		var up *pikpak.APIError
-		if errors.As(e, &up) && (up.Status == 401 || up.Code == "verification_required") {
-			_, _ = a.Store.DB.Exec(`UPDATE accounts SET status='verification_required',error=?,verification_url=? WHERE id=?`, up.Error(), up.VerificationURL, j.AccountID)
-			_, _ = a.Store.DB.Exec(`UPDATE jobs SET state='paused',message='账号需要验证，已暂停后续请求；验证后可继续任务' WHERE account_id=? AND kind<>'verify' AND state IN ('queued','waiting','retry')`, j.AccountID)
-			j.State = "paused"
-			j.Message = up.Error()
-		}
 		if errors.As(e, &up) && up.Status == 429 {
 			until := now() + int64(max(up.RetryAfter, 60))
 			_, _ = a.Store.DB.Exec(`UPDATE jobs SET next_run=MAX(next_run,?) WHERE account_id=? AND state IN ('queued','waiting','retry')`, until, j.AccountID)
@@ -375,6 +432,7 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 	a.Store.Event("job", map[string]string{"id": j.ID, "state": j.State})
 }
 func (a *App) verify(ctx context.Context, c pikpak.Provider, j *Job) error {
+	ctx = context.WithValue(ctx, accountProbeKey{}, j.AccountID)
 	me, e := c.Me(ctx)
 	if e != nil {
 		return e
@@ -382,23 +440,58 @@ func (a *App) verify(ctx context.Context, c pikpak.Provider, j *Job) error {
 	if me.Sub == "" {
 		return block("PikPak returned no account identity")
 	}
-	ac, e := a.Store.Account(j.AccountID)
+	ac, e := a.currentClientAccount(j.AccountID, c)
 	if e != nil {
 		return e
 	}
 	if ac.Identity != "" && ac.Identity != me.Sub {
-		return block("Account identity mismatch; credentials were not accepted")
+		return &pikpak.APIError{Status: 409, Code: "identity_changed"}
 	}
 	q, e := c.Quota(ctx)
 	if e != nil {
 		return e
 	}
-	_, e = a.Store.DB.Exec(`UPDATE accounts SET identity=?,status='ready',error='',verification_url='',quota_limit=?,quota_used=? WHERE id=?`, me.Sub, int64(q.Limit), int64(q.Usage), j.AccountID)
+	ac, e = a.currentClientAccount(j.AccountID, c)
 	if e != nil {
 		return e
 	}
+	result, e := a.Store.DB.Exec(`UPDATE accounts SET identity=?,quota_limit=?,quota_used=? WHERE id=? AND secret=?`, me.Sub, int64(q.Limit), int64(q.Usage), j.AccountID, ac.Secret)
+	if e != nil {
+		return e
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return errPaused
+	}
+	if !q.Unlimited && q.Limit > 0 && q.Usage >= q.Limit {
+		// Identity and quota were verified, so a previous login/freeze fault is
+		// resolved. Keep the capacity restriction and do not create directories.
+		result, e = a.Store.DB.Exec(`UPDATE accounts SET status='quota_exceeded',error='',verification_url='' WHERE id=? AND secret=?`, j.AccountID, ac.Secret)
+		if e != nil {
+			return e
+		}
+		if count, _ := result.RowsAffected(); count != 1 {
+			return errPaused
+		}
+		return &pikpak.APIError{Code: "quota_exceeded"}
+	}
 	if a.active() == j.AccountID {
 		e = a.prepareRoot(ctx, c, j.AccountID)
+	}
+	if e != nil {
+		return e
+	}
+	ac, e = a.currentClientAccount(j.AccountID, c)
+	if e != nil {
+		return e
+	}
+	result, e = a.Store.DB.Exec(`UPDATE accounts SET status='ready',error='',verification_url='' WHERE id=? AND secret=?`, j.AccountID, ac.Secret)
+	if e == nil {
+		if count, _ := result.RowsAffected(); count != 1 {
+			return errPaused
+		}
+	}
+	if e == nil {
+		a.Store.Event("account", j.AccountID)
 	}
 	return e
 }
@@ -657,6 +750,9 @@ func (a *App) scan(ctx context.Context, c pikpak.Provider, j *Job) error {
 	if e := a.checkLibrary(ctx, c, j); e != nil {
 		return e
 	}
+	if !a.accountJobAllowed(j.AccountID, "recover") {
+		return nil
+	}
 	_, e := a.enqueueTelDriveMissing(ctx, j, "")
 	return e
 }
@@ -676,7 +772,7 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 	}
 	if me.Sub != ac.Identity {
 		a.unknown(j.AccountID)
-		return block("Account identity mismatch")
+		return &pikpak.APIError{Status: 409, Code: "identity_changed"}
 	}
 	nodes, e := a.Store.AllNodes(j.AccountID)
 	if e != nil {
@@ -780,7 +876,13 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 	}
 	_ = a.Store.Set("last_scan", strconv.FormatInt(now(), 10))
 	if q, qe := c.Quota(ctx); qe == nil {
-		_, _ = a.Store.DB.Exec(`UPDATE accounts SET quota_limit=?,quota_used=? WHERE id=?`, int64(q.Limit), int64(q.Usage), j.AccountID)
+		current, err := a.currentClientAccount(j.AccountID, c)
+		if err != nil {
+			return err
+		}
+		a.recordAccountQuotaIfCurrent(j.AccountID, current.Secret, q)
+	} else if status, _, _ := classifyAccountError(qe); status != "" {
+		return qe
 	}
 	return nil
 }
@@ -1090,8 +1192,7 @@ func (a *App) recover(ctx context.Context, c pikpak.Provider, j *Job, d *JobData
 			if errors.As(err, &p) || pikpak.Temporary(err) || errors.Is(err, errPaused) {
 				return err
 			}
-			var api *pikpak.APIError
-			if errors.As(err, &api) && (api.Status == 401 || api.Code == "verification_required") {
+			if status, _, _ := classifyAccountError(err); status != "" {
 				return err
 			}
 			d.Problems[n.ID] = err.Error()
@@ -1195,8 +1296,7 @@ func (a *App) restoreNode(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 				if pikpak.Temporary(e) {
 					return e
 				}
-				var up *pikpak.APIError
-				if errors.As(e, &up) && (up.Status == 401 || up.Code == "verification_required") {
+				if status, _, _ := classifyAccountError(e); status != "" {
 					d.InstantTried[n.ID] = false
 					return e
 				}
