@@ -144,11 +144,23 @@ func TestRecoveryPartitionKeepsSessionsBatchesAndResourceOwnership(t *testing.T)
 		t.Fatal(err)
 	}
 	for _, id := range td.NodeIDs {
+		if td.Done[id] {
+			if _, exists := operations[id]; exists {
+				t.Fatal("completed TelDrive item still reserved", id)
+			}
+			continue
+		}
 		if operations[id].JobID != original.ID {
 			t.Fatal("TelDrive reservation changed", id, operations[id])
 		}
 	}
 	for _, id := range cloud.NodeIDs {
+		if cloud.Done[id] {
+			if _, exists := operations[id]; exists {
+				t.Fatal("completed cloud item still reserved", id)
+			}
+			continue
+		}
 		if operations[id].JobID != child.ID {
 			t.Fatal("cloud reservation overlaps old recovery", id, operations[id])
 		}
