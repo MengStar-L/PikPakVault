@@ -1165,8 +1165,8 @@ func (a *App) jobAction(w http.ResponseWriter, r *http.Request) error {
 		j.State = "cancelled"
 		j.Message = "Cancelled; saved sources and files are retained"
 	case "retry":
-		if j.State == "running" {
-			return fail(409, "Task is already running")
+		if j.State == "running" || a.executing[j.ID] {
+			return fail(409, "原任务仍在保存进度，请稍后再试")
 		}
 		if j.AccountID != a.active() && j.Kind != "verify" {
 			return fail(409, "Switch to this task's account first")
@@ -1216,7 +1216,7 @@ func (a *App) jobAction(w http.ResponseWriter, r *http.Request) error {
 		if j.State == "completed" {
 			return fail(409, "已完成任务无需重新关联")
 		}
-		if j.State == "running" {
+		if j.State == "running" || a.executing[j.ID] {
 			return fail(409, "Pause the task before associating results")
 		}
 		var v struct {

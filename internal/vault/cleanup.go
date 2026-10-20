@@ -140,7 +140,7 @@ func (a *App) cleanup(ctx context.Context, c pikpak.Provider, j *Job, d *JobData
 					retain("保留：旧任务记录不完整")
 					continue
 				}
-				name, parent = ".vault-task-"+owner.ID+"-"+sourceID[:8], ac.RootID
+				name, parent = ".vault-task-"+operationJobID(&owner, &source)+"-"+sourceID[:8], ac.RootID
 			}
 			if !f.Folder() || f.Name != name || f.ParentID != parent {
 				retain("保留：目录名称或位置已变化")

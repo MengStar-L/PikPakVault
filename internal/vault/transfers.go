@@ -38,7 +38,7 @@ func (a *App) materialize(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 			if err != nil {
 				return nil, err
 			}
-			t.StageName, t.StageParent = "恢复-"+j.ID[:8]+"-"+s.ID[:8], parent
+			t.StageName, t.StageParent = "恢复-"+operationJobID(j, d)[:8]+"-"+s.ID[:8], parent
 			id, err := namedStage(ctx, c, parent, t.StageName)
 			if err != nil {
 				return nil, err

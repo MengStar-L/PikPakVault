@@ -44,7 +44,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 从 [Releases](https://github.com/MengStar-L/PikPakVault/releases/latest) 下载对应架构安装包与 `SHA256SUMS`，也可以执行：
 
 ```bash
-version=0.3.10
+version=0.3.11
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -131,6 +131,8 @@ PotPlayer 直接连接 PikPak，不使用需要网页登录态的服务器中转
 
 同步后可以自由移动、重命名文件，重复扫描不会再上传同一资源。PikPak 副本缺失时，从保存的 TelDrive 来源恢复到资源库中的最新路径；是否自动补回跟随监控的同步模式。
 
+恢复混合来源时，程序自动拆为「云端转存」与「TelDrive 下载上传」两路任务，同时推进、各路最多执行一个任务。TelDrive 大文件下载上传不会占住磁链和分享链接的恢复队列；磁链可能仍需等待 PikPak 完成云端下载，并非保证瞬间恢复。传输任务中的小标签可区分来源，两路可分别暂停、取消或重试，重启后继续保留各自进度与上传会话。
+
 ## 程序更新
 
 进入 **设置 → 程序更新 → 检查更新**。发现新版本后查看发布说明，点击「安装更新」，再确认安装与重启。**检查更新不会自动安装。**
@@ -145,7 +147,7 @@ PotPlayer 直接连接 PikPak，不使用需要网页登录态的服务器中转
 sudo journalctl -u pikpak-vault-update -n 60 --no-pager
 sudo cat /var/lib/pikpak-vault-updater/status.json
 # 将版本号替换为实际新版本
-sudo bash deploy/update.sh v0.3.10
+sudo bash deploy/update.sh v0.3.11
 ```
 
 更新源默认是本仓库的公开 Releases，可在 root 管理的环境配置中设置 `VAULT_UPDATE_REPOSITORY=owner/repository`。Windows 和 Docker 支持检查与下载链接；网页自动安装仅用于上述 systemd 安装方式。Docker 更新请重新构建镜像并保留数据卷。
@@ -193,7 +195,7 @@ go test ./...
 go run ./cmd/vault serve --data ./data --listen 127.0.0.1:5675
 
 # Linux 双架构发布包
-bash scripts/build.sh 0.3.10
+bash scripts/build.sh 0.3.11
 ```
 
 前端 React 19 + TypeScript + Vite + Tailwind / Radix / Motion，后端 Go `net/http` + SQLite。前端产物嵌入可执行文件。开发热更新使用 `npm run dev --prefix web`。Docker 可执行 `docker compose up -d --build`。

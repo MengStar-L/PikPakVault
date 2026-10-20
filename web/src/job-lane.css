@@ -1,0 +1,6 @@
+.job-lane{display:inline-flex;align-items:center;gap:5px;padding:3px 6px;border-radius:5px;font-size:10px;line-height:1.4;white-space:nowrap;color:#6682bf;background:#eef3fd}
+.job-lane.teldrive{color:#8973b4;background:#f4effb}
+.job-lane svg{flex-shrink:0}
+.task-detail-status{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.recovery-lanes-note{margin:12px 0;padding:10px 12px;border-radius:8px;background:#f4f7fd;color:#7487a5;font-size:11px;line-height:1.8;overflow-wrap:anywhere}
+@media(max-width:640px){.job-lane{font-size:9px}.recovery-lanes-note{font-size:10px}}

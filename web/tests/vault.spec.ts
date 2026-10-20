@@ -52,8 +52,12 @@ test('source import progresses through real backend and recovers deletion', asyn
   await page.locator('.recovery-item').filter({ hasText: 'one.mp4' }).getByRole('button', { name: '核对恢复' }).click()
   await expect(page.getByRole('heading', { name: '确认恢复资源' })).toBeVisible(); await expect(page.getByText('原始来源重建').or(page.getByText('核对 → 回收站 → 来源'))).toBeVisible()
   await noOverflow(page)
+  const recoveryResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/recovery' && response.request().method() === 'POST')
   await page.getByRole('button', { name: '确认开始恢复', exact: true }).click()
-  await expect(page.locator('.task-card').filter({ hasText: 'Restore library' }).first().locator('.status')).toHaveText('已完成', { timeout: 20000 })
+  const recoveryJob = await (await recoveryResponse).json()
+  await expect.poll(async () => ((await (await page.request.get(`/api/v1/jobs/${recoveryJob.id}`)).json()).job.state), { timeout: 20000 }).toBe('completed')
+  const completedJob = (await (await page.request.get(`/api/v1/jobs/${recoveryJob.id}`)).json()).job
+  await expect(page.locator('.task-card').filter({ has: page.getByRole('button', { name: completedJob.title, exact: true }) }).first().locator('.status')).toHaveText('已完成', { timeout: 20000 })
   const restored = await (await page.request.get('/api/v1/files/' + imported.files[0].id)).json()
   expect(restored.file.state).toBe('present'); expect(restored.file.name).toBe('one.mp4')
 })

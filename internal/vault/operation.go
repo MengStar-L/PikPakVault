@@ -18,3 +18,15 @@ func operation(ctx context.Context) *operationCache {
 	v, _ := ctx.Value(operationKey{}).(*operationCache)
 	return v
 }
+
+type structureKey struct{}
+
+// Recursive folder/root resolution and alignment share one short lock. The
+// marker is private to an execution context, which is never shared by workers.
+func (a *App) lockStructure(ctx context.Context) (context.Context, func()) {
+	if ctx.Value(structureKey{}) == a {
+		return ctx, func() {}
+	}
+	a.structureMu.Lock()
+	return context.WithValue(ctx, structureKey{}, a), a.structureMu.Unlock
+}

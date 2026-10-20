@@ -108,6 +108,8 @@ func (a *App) rootParent(ctx context.Context, c pikpak.Provider, parts []string,
 }
 
 func (a *App) resolveRoot(ctx context.Context, c pikpak.Provider, account string, restore bool) (string, error) {
+	ctx, unlock := a.lockStructure(ctx)
+	defer unlock()
 	ac, err := a.Store.Account(account)
 	if err != nil {
 		return "", err

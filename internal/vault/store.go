@@ -391,6 +391,7 @@ type Job struct {
 	ID        string          `json:"id"`
 	AccountID string          `json:"account_id"`
 	Kind      string          `json:"kind"`
+	Lane      string          `json:"lane,omitempty"`
 	Title     string          `json:"title"`
 	State     string          `json:"state"`
 	Data      json.RawMessage `json:"-"`
@@ -408,6 +409,9 @@ func jobScan(r scanner) (j Job, e error) {
 	var d string
 	e = r.Scan(&j.ID, &j.AccountID, &j.Kind, &j.Title, &j.State, &d, &j.Progress, &j.Message, &j.Attempts, &j.NextRun, &j.Created, &j.Updated)
 	j.Data = json.RawMessage(d)
+	if j.Kind == "recover" || j.Kind == "teldrive_upload" || j.Kind == "import" {
+		j.Lane = jobLane(j)
+	}
 	return
 }
 func (s *Store) Job(id string) (Job, error) {
@@ -431,6 +435,9 @@ func (s *Store) Jobs() ([]Job, error) {
 }
 func (s *Store) NewJob(account, kind, title string, data any) (Job, error) {
 	j := Job{ID: ID(), AccountID: account, Kind: kind, Title: title, State: "queued", Data: json.RawMessage(jsonText(data)), Created: now(), Updated: now()}
+	if kind == "recover" || kind == "teldrive_upload" || kind == "import" {
+		j.Lane = jobLane(j)
+	}
 	_, e := s.DB.Exec(`INSERT INTO jobs(id,account_id,kind,title,state,data,created,updated) VALUES(?,?,?,?,?,?,?,?)`, j.ID, account, kind, title, j.State, string(j.Data), j.Created, j.Updated)
 	return j, e
 }

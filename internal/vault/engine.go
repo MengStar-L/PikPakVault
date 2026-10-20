@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"pikpakvault/internal/pikpak"
 )
@@ -31,6 +30,8 @@ type App struct {
 	gate          sync.RWMutex
 	dataMu        sync.RWMutex // Import replaces the logical database as one transaction.
 	jobMu         sync.Mutex
+	executing     map[string]bool // Protected by jobMu, including paused requests still unwinding.
+	structureMu   sync.Mutex      // Short directory/path operations, never file download/upload.
 	clientsMu     sync.Mutex
 	clients       map[string]*pikpak.Client
 	wake          chan struct{}
@@ -176,6 +177,8 @@ type TransferState struct {
 	Started         int64           `json:"started"`
 }
 type JobData struct {
+	RecoveryLane   string                     `json:"recovery_lane,omitempty"`
+	OperationID    string                     `json:"operation_id,omitempty"` // Original remote intent names after partitioning a legacy recovery.
 	RSSID          string                     `json:"rss_id,omitempty"`
 	RSSManual      bool                       `json:"rss_manual,omitempty"`
 	MonitorID      string                     `json:"monitor_id,omitempty"`
@@ -235,43 +238,6 @@ func (a *App) checkpoint(j *Job, d *JobData) error {
 	}
 	return a.Store.SaveJob(j, d)
 }
-func (a *App) Run(ctx context.Context) {
-	// Only the process holding the service lock resumes interrupted jobs.
-	resumed := false
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		case <-a.wake:
-		}
-		if a.Store.Get("import_review_required") == "true" || updatePending() {
-			continue
-		}
-		a.dataMu.RLock()
-		if a.Store.Get("import_review_required") == "true" || updatePending() {
-			a.dataMu.RUnlock()
-			continue
-		}
-		if !resumed {
-			_, _ = a.Store.DB.Exec(`UPDATE jobs SET state='queued',message='Resuming after restart' WHERE state='running'`)
-			resumed = true
-		}
-		a.scheduleRoot()
-		a.scheduleScan()
-		a.scheduleCleanup()
-		a.scheduleTelDrive()
-		a.scheduleRSS()
-		a.dataMu.RUnlock()
-		j, e := jobScan(a.Store.DB.QueryRow(`SELECT `+jobCols+` FROM jobs WHERE state IN ('queued','waiting','retry') AND next_run<=? AND (kind='verify' OR (account_id=? AND EXISTS (SELECT 1 FROM accounts WHERE accounts.id=jobs.account_id AND (status='ready' OR (status='quota_exceeded' AND jobs.kind IN ('scan','trash','sync','cleanup')))))) ORDER BY CASE WHEN kind='verify' THEN 0 WHEN kind='root' THEN 1 WHEN kind='cleanup' THEN 3 ELSE 2 END,next_run,created,id LIMIT 1`, now(), a.active()))
-		if e != nil {
-			continue
-		}
-		a.Execute(ctx, &j)
-	}
-}
 func (a *App) scheduleScan() {
 	minutes, _ := strconv.Atoi(a.Store.Get("scan_minutes"))
 	last, _ := strconv.ParseInt(a.Store.Get("last_auto_scan"), 10, 64)
@@ -296,8 +262,18 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 	}
 	ctx = context.WithValue(ctx, operationKey{}, &operationCache{folders: map[string]resolvedFolder{}})
 	a.jobMu.Lock()
+	if a.executing[j.ID] {
+		a.jobMu.Unlock()
+		return
+	}
 	current, e := a.Store.Job(j.ID)
 	if e != nil || current.State == "paused" || current.State == "cancelled" || current.State == "completed" {
+		a.jobMu.Unlock()
+		return
+	}
+	if ctx.Value(scheduledExecutionKey{}) == true &&
+		(current.NextRun > now() || (current.Kind != "verify" && current.AccountID != a.active()) ||
+			(current.State != "queued" && current.State != "waiting" && current.State != "retry")) {
 		a.jobMu.Unlock()
 		return
 	}
@@ -316,6 +292,16 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 		a.jobMu.Unlock()
 		return
 	}
+	if a.executing == nil {
+		a.executing = make(map[string]bool)
+	}
+	a.executing[j.ID] = true
+	defer func() {
+		a.jobMu.Lock()
+		delete(a.executing, j.ID)
+		a.jobMu.Unlock()
+		a.notify()
+	}()
 	a.jobMu.Unlock()
 	var d JobData
 	var c pikpak.Provider
@@ -526,6 +512,8 @@ func listAll(ctx context.Context, c pikpak.Provider, parent string) ([]pikpak.Fi
 	}
 }
 func (a *App) folder(ctx context.Context, c pikpak.Provider, account, nodeID string, seen map[string]bool) (result string, err error) {
+	ctx, unlock := a.lockStructure(ctx)
+	defer unlock()
 	if nodeID == "" || nodeID == "root" {
 		return a.ensureRoot(ctx, c, account)
 	}
@@ -691,6 +679,8 @@ func compatible(n Node, f pikpak.File) bool {
 	return n.Size == int64(f.Size) && (n.Hash == "" || f.Hash == "" || strings.EqualFold(n.Hash, f.Hash))
 }
 func (a *App) align(ctx context.Context, c pikpak.Provider, account string, n Node, f pikpak.File, parent string) error {
+	ctx, unlock := a.lockStructure(ctx)
+	defer unlock()
 	latest, e := a.Store.Node(n.ID, account)
 	if e != nil {
 		return e
@@ -758,6 +748,15 @@ func (a *App) scan(ctx context.Context, c pikpak.Provider, j *Job) error {
 }
 
 func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error {
+	// A listing and its final state commit must observe one directory layout.
+	// Payload downloads/uploads do not hold this lock; only their final
+	// reconciliation waits, so a stale scan cannot overwrite a completed bind.
+	ctx, unlock := a.lockStructure(ctx)
+	defer unlock()
+	protected, e := scanProtectedNodes(a.Store.DB, j.AccountID)
+	if e != nil {
+		return e
+	}
 	ac, e := a.Store.Account(j.AccountID)
 	if e != nil {
 		return e
@@ -767,11 +766,11 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 	}
 	me, e := c.Me(ctx)
 	if e != nil {
-		a.unknown(j.AccountID)
+		a.unknown(j.AccountID, protected)
 		return e
 	}
 	if me.Sub != ac.Identity {
-		a.unknown(j.AccountID)
+		a.unknown(j.AccountID, protected)
 		return &pikpak.APIError{Status: 409, Code: "identity_changed"}
 	}
 	nodes, e := a.Store.AllNodes(j.AccountID)
@@ -780,7 +779,7 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 	}
 	root, e := c.Get(ctx, ac.RootID)
 	if e != nil && !pikpak.Missing(e) {
-		a.unknown(j.AccountID)
+		a.unknown(j.AccountID, protected)
 		return e
 	}
 	rootMissing := pikpak.Missing(e) || (e == nil && root.Trashed)
@@ -808,13 +807,13 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 			return nil
 		}
 		if e = walk(ac.RootID); e != nil {
-			a.unknown(j.AccountID)
+			a.unknown(j.AccountID, protected)
 			return e
 		}
 	}
 	states := map[string]string{}
 	for i, n := range nodes {
-		if n.Trashed || n.RemoteID == "" {
+		if n.Trashed || n.RemoteID == "" || protected[n.ID] {
 			continue
 		}
 		if e = ctx.Err(); e != nil {
@@ -828,7 +827,7 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 					states[n.ID] = "missing"
 					continue
 				}
-				a.unknown(j.AccountID)
+				a.unknown(j.AccountID, protected)
 				return e
 			}
 		}
@@ -861,9 +860,13 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 		return e
 	}
 	defer tx.Rollback()
+	currentProtected, e := scanProtectedNodes(tx, j.AccountID)
+	if e != nil {
+		return e
+	}
 	for _, n := range nodes {
 		state, ok := states[n.ID]
-		if !ok {
+		if !ok || protected[n.ID] || currentProtected[n.ID] {
 			continue
 		}
 		if _, e = tx.Exec(`UPDATE bindings SET state=?,checked=? WHERE account_id=? AND node_id=? AND remote_id=?
@@ -886,8 +889,24 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 	}
 	return nil
 }
-func (a *App) unknown(account string) {
-	_, _ = a.Store.DB.Exec(`UPDATE bindings SET state='unknown' WHERE account_id=?`, account)
+func (a *App) unknown(account string, protected map[string]bool) {
+	// Called while checkLibrary holds the structure lock. Keep resumable
+	// transfers and their implicitly rebuilt parents out of a failed scan too.
+	tx, e := a.Store.DB.Begin()
+	if e != nil {
+		return
+	}
+	defer tx.Rollback()
+	currentProtected, e := scanProtectedNodes(tx, account)
+	if e != nil {
+		return
+	}
+	for id := range protected {
+		currentProtected[id] = true
+	}
+	if e = scanUnknown(tx, account, currentProtected); e == nil {
+		_ = tx.Commit()
+	}
 }
 
 func ParseSource(link, pass string) (Source, error) {
@@ -1003,6 +1022,8 @@ func contains(xs []string, s string) bool {
 	return false
 }
 func (a *App) stage(ctx context.Context, c pikpak.Provider, account, name string) (string, error) {
+	ctx, unlock := a.lockStructure(ctx)
+	defer unlock()
 	root, e := a.ensureRoot(ctx, c, account)
 	if e != nil {
 		return "", e
@@ -1266,7 +1287,7 @@ func (a *App) restoreNode(ctx context.Context, c pikpak.Provider, j *Job, d *Job
 		}
 	}
 	if n.Hash != "" && legacyInstant && !batchReady && d.Instant[n.ID] == "" {
-		stage, e := a.stage(ctx, c, j.AccountID, ".vault-instant-"+j.ID)
+		stage, e := a.stage(ctx, c, j.AccountID, ".vault-instant-"+operationJobID(j, d))
 		if e != nil {
 			return e
 		}
