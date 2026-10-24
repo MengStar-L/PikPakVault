@@ -171,6 +171,8 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	private.HandleFunc("PATCH /api/v1/accounts/{id}", a.endpoint(a.accountUpdate))
 	private.HandleFunc("POST /api/v1/accounts/{id}/activate", a.endpoint(a.accountActivate))
 	private.HandleFunc("POST /api/v1/accounts/{id}/verify", a.endpoint(a.accountVerify))
+	private.HandleFunc("POST /api/v1/accounts/{id}/verification", a.endpoint(a.accountVerificationPrepare))
+	private.HandleFunc("POST /api/v1/accounts/verification/complete", a.endpoint(a.accountVerificationComplete))
 	private.HandleFunc("GET /api/v1/files", a.endpoint(a.filesList))
 	private.HandleFunc("POST /api/v1/files", a.endpoint(a.folderCreate))
 	private.HandleFunc("GET /api/v1/files/{id}", a.endpoint(a.fileDetail))
@@ -229,7 +231,9 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 				http.Error(w, "Frontend is not built", 503)
 				return
 			}
-			if name == "index.html" {
+			if r.URL.Path == "/account-verification" {
+				w.Header().Set("Cache-Control", "no-store")
+			} else if name == "index.html" {
 				w.Header().Set("Cache-Control", "no-cache")
 			} else if strings.HasPrefix(name, "assets/") {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -455,8 +459,15 @@ func (a *App) accountUpdate(w http.ResponseWriter, r *http.Request) error {
 		v.DeviceID = previous.DeviceID
 	}
 	if v.CaptchaToken != "" && v.Password == "" && v.RefreshToken == "" && v.AccessToken == "" {
+		// Captcha tokens belong to the device that completed verification. Keep
+		// that device paired with the token while retaining the login credentials.
+		previous.DeviceID = v.DeviceID
 		previous.CaptchaToken = v.CaptchaToken
 		previous.CaptchaExpiry = now() + 240
+		previous.CaptchaVerified = true
+		if previous.CaptchaAction == "" && (previous.AccessToken == "" || (previous.Expiry > 0 && previous.Expiry < now()+30)) {
+			previous.CaptchaAction = "POST:/v1/auth/signin"
+		}
 		v.Credentials = previous
 	}
 	v.UserID = ac.Identity

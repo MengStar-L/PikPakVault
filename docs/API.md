@@ -17,6 +17,8 @@ JSON 错误：`{"error":"可读原因"}`。PikPak 错误另提供 `code`、`endp
 | POST `/accounts` | `{name, username?, password?, refresh_token?, access_token?, device_id?, captcha_token?}`，创建后异步验证 |
 | PATCH `/accounts/{id}` | 同上；凭据更新验证身份后提交，不能替换为另一个用户 |
 | POST `/accounts/{id}/verify` | 验证账号、容量与当前账号根目录 |
+| POST `/accounts/{id}/verification` | `{callback_url}`，创建短期人工验证会话，返回 `{url,expires_at}`；返回地址仅允许同源 `/account-verification` |
+| POST `/accounts/verification/complete` | `{state,captcha_token,expires_in}`，消费一次性会话并核验身份和容量；通过后返回 `{account_id}`，暂停任务仍需手动继续 |
 | POST `/accounts/{id}/activate` | 切换活动账号，暂停旧账号任务，安排准备根目录 |
 | GET `/files` | 查询参数 `parent=root`, `view`, `search`, `sort`, `direction`, `page=0`, `limit=100`（最大 500），返回 `{files,total,page,limit,breadcrumbs,transferring}`；`transfers=0` 排除尚未登记的传输项目 |
 | POST `/files` | `{name,parent_id}` 新建逻辑文件夹及持久化远端任务 |

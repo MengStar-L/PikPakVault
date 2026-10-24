@@ -13,7 +13,7 @@ const issues: Record<string, AccountIssue> = {
   blocked: { state: 'blocked', title: '账号已被限制或冻结', guidance: '请在 PikPak 官方客户端确认账号状态，解除限制后重新检查，或切换其他可用账号。', tone: 'danger' },
   auth_required: { state: 'auth_required', title: '账号登录失效', guidance: '请更新账号密码或登录令牌，然后重新检查连接。', tone: 'danger' },
   quota_exceeded: { state: 'quota_exceeded', title: '云端空间不足', guidance: '请在 PikPak 释放空间、扩容或切换账号，再重新检查并重试保存。', tone: 'warning' },
-  verification_required: { state: 'verification_required', title: '账号需要安全验证', guidance: '请先完成 PikPak 安全验证，再更新验证信息或重新检查。', tone: 'warning' },
+  verification_required: { state: 'verification_required', title: '账号需要安全验证', guidance: '请在账号卡片中开始安全验证，完成后会自动返回核验账号。', tone: 'warning' },
   error: { state: 'error', title: '账号连接异常', guidance: '暂时无法确认账号可用性。请检查网络后重新检查账号。', tone: 'warning' },
   unverified: { state: 'unverified', title: '账号尚未验证', guidance: '连接检查完成前，暂时无法确认账号可用性。', tone: 'warning' },
 }

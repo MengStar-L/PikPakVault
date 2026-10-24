@@ -44,7 +44,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 从 [Releases](https://github.com/MengStar-L/PikPakVault/releases/latest) 下载对应架构安装包与 `SHA256SUMS`，也可以执行：
 
 ```bash
-version=0.3.11
+version=0.3.12
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -99,6 +99,7 @@ PotPlayer 直接连接 PikPak，不使用需要网页登录态的服务器中转
 账号被冻结、登录失效、需要安全验证或云端空间不足时，页面顶部和账号卡片会持续显示具体原因，不再保留“可用”的错误状态。错误会同步到受影响任务；上传会话、已提交结果和本地来源记录继续保留。
 
 - 冻结或认证异常：暂停后续账号请求及自动保存，先在 PikPak 确认状态或更新凭据，再点击“重新检查”。
+- 安全验证：点击账号卡片的“开始安全验证”，获取链接后打开 PikPak 验证页。手动完成验证码后会返回本程序核验账号身份与容量；通过前保持暂停。链接失效或页面未正常显示时，可重新获取链接。
 - 空间不足：暂停新增保存、上传和恢复，仍可检查、整理及清理已有资源。释放空间后重新检查账号，在传输任务中继续原任务。
 - 网络连接失败与资源来源失效分别处理，不会把某个分享失效或媒体地址过期误报为整个账号被冻结。
 - 检查期间按钮显示“正在检查”，重复点击共用同一检查任务。账号恢复后提示自动消失，已暂停的任务需手动继续，避免未经确认重新提交。
@@ -149,7 +150,7 @@ PotPlayer 直接连接 PikPak，不使用需要网页登录态的服务器中转
 sudo journalctl -u pikpak-vault-update -n 60 --no-pager
 sudo cat /var/lib/pikpak-vault-updater/status.json
 # 将版本号替换为实际新版本
-sudo bash deploy/update.sh v0.3.11
+sudo bash deploy/update.sh v0.3.12
 ```
 
 更新源默认是本仓库的公开 Releases，可在 root 管理的环境配置中设置 `VAULT_UPDATE_REPOSITORY=owner/repository`。Windows 和 Docker 支持检查与下载链接；网页自动安装仅用于上述 systemd 安装方式。Docker 更新请重新构建镜像并保留数据卷。
@@ -197,7 +198,7 @@ go test ./...
 go run ./cmd/vault serve --data ./data --listen 127.0.0.1:5675
 
 # Linux 双架构发布包
-bash scripts/build.sh 0.3.11
+bash scripts/build.sh 0.3.12
 ```
 
 前端 React 19 + TypeScript + Vite + Tailwind / Radix / Motion，后端 Go `net/http` + SQLite。前端产物嵌入可执行文件。开发热更新使用 `npm run dev --prefix web`。Docker 可执行 `docker compose up -d --build`。

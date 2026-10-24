@@ -38,14 +38,51 @@ type Client struct {
 	OnError func(error)
 	// BeforeRequest rechecks whether queued requests may proceed after taking mu.
 	// It runs before any authentication request and must not call this Client.
-	BeforeRequest   func(context.Context) error
-	BeforeWrite     func() (func(), error)
-	RequestInterval time.Duration
-	WriteInterval   time.Duration
-	lastRequest     time.Time
-	lastWrite       time.Time
-	cooldownUntil   time.Time
-	mu              sync.Mutex
+	BeforeRequest    func(context.Context) error
+	BeforeWrite      func() (func(), error)
+	RequestInterval  time.Duration
+	WriteInterval    time.Duration
+	lastRequest      time.Time
+	lastWrite        time.Time
+	cooldownUntil    time.Time
+	lastVerification time.Time
+	mu               sync.Mutex
+}
+
+// PrepareVerification requests a fresh, user-initiated challenge without
+// treating a challenge token as completed verification or bypassing pacing.
+func (c *Client) PrepareVerification(ctx context.Context) (string, Credentials, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.BeforeRequest != nil {
+		if err := c.BeforeRequest(ctx); err != nil {
+			return "", Credentials{}, err
+		}
+	}
+	if time.Since(c.lastVerification) < 10*time.Second {
+		return "", Credentials{}, &APIError{Status: 429, Code: "verification_cooldown", Message: "请稍等几秒再重新获取验证链接"}
+	}
+	c.lastVerification = time.Now()
+	action := "GET:/v1/user/me"
+	if c.Credentials.AccessToken == "" || (c.Credentials.Expiry > 0 && c.Credentials.Expiry < time.Now().Unix()+30) {
+		action = "POST:/v1/auth/signin"
+	} else if c.Credentials.CaptchaAction != "" && !c.Credentials.CaptchaVerified {
+		// A write may require verification even while ordinary identity reads
+		// succeed. Refresh the pending challenge for that original operation.
+		action = c.Credentials.CaptchaAction
+	}
+	err := c.captcha(ctx, action)
+	if err != nil && c.OnError != nil {
+		c.OnError(err)
+	}
+	var challenge *APIError
+	if errors.As(err, &challenge) && challenge.Code == "verification_required" && challenge.VerificationURL != "" {
+		return challenge.VerificationURL, c.Credentials, nil
+	}
+	if err == nil {
+		err = &APIError{Status: 409, Code: "verification_not_required", Message: "PikPak 当前未要求人工验证，请返回账号页重新检查"}
+	}
+	return "", Credentials{}, err
 }
 
 func New(c Credentials) *Client {
@@ -205,6 +242,8 @@ func (c *Client) captcha(ctx context.Context, action string) error {
 	}
 	c.Credentials.CaptchaToken = res.Token
 	c.Credentials.CaptchaExpiry = time.Now().Unix() + res.Expires
+	c.Credentials.CaptchaAction = action
+	c.Credentials.CaptchaVerified = res.URL == ""
 	if err = c.persist(); err != nil {
 		return err
 	}
@@ -231,8 +270,10 @@ func (c *Client) login(ctx context.Context) error {
 		if c.Credentials.Username == "" || c.Credentials.Password == "" {
 			return &APIError{Status: 401, Code: "credentials_required", Message: "account password or refresh token required"}
 		}
-		if err = c.captcha(ctx, "POST:/v1/auth/signin"); err != nil {
-			return err
+		if !c.Credentials.CaptchaVerified || c.Credentials.CaptchaAction != "POST:/v1/auth/signin" || c.Credentials.CaptchaToken == "" || c.Credentials.CaptchaExpiry <= time.Now().Unix()+10 {
+			if err = c.captcha(ctx, "POST:/v1/auth/signin"); err != nil {
+				return err
+			}
 		}
 		err = c.raw(ctx, c.UserURL, "POST", "/v1/auth/signin", nil, map[string]any{"client_id": clientID, "client_secret": clientSecret, "username": c.Credentials.Username, "password": c.Credentials.Password}, &res)
 		if err != nil {
@@ -316,7 +357,7 @@ func (c *Client) call(ctx context.Context, host, method, path string, q url.Valu
 				}
 				continue
 			}
-			if e.Code == "captcha_invalid" || e.Code == "captcha_token_expired" || e.Code == "captcha_required" {
+			if e.Code == "captcha_invalid" || e.Code == "captcha_invalid_token" || e.Code == "captcha_token_expired" || e.Code == "captcha_required" {
 				c.Credentials.CaptchaToken = ""
 				continue
 			}

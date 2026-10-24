@@ -124,15 +124,17 @@ func Temporary(err error) bool {
 }
 
 type Credentials struct {
-	Username      string `json:"username,omitempty"`
-	Password      string `json:"password,omitempty"`
-	AccessToken   string `json:"access_token,omitempty"`
-	RefreshToken  string `json:"refresh_token,omitempty"`
-	DeviceID      string `json:"device_id,omitempty"`
-	UserID        string `json:"user_id,omitempty"`
-	CaptchaToken  string `json:"captcha_token,omitempty"`
-	Expiry        int64  `json:"expiry,omitempty"`
-	CaptchaExpiry int64  `json:"captcha_expiry,omitempty"`
+	Username        string `json:"username,omitempty"`
+	Password        string `json:"password,omitempty"`
+	AccessToken     string `json:"access_token,omitempty"`
+	RefreshToken    string `json:"refresh_token,omitempty"`
+	DeviceID        string `json:"device_id,omitempty"`
+	UserID          string `json:"user_id,omitempty"`
+	CaptchaToken    string `json:"captcha_token,omitempty"`
+	Expiry          int64  `json:"expiry,omitempty"`
+	CaptchaExpiry   int64  `json:"captcha_expiry,omitempty"`
+	CaptchaAction   string `json:"captcha_action,omitempty"`
+	CaptchaVerified bool   `json:"captcha_verified,omitempty"`
 }
 
 // Provider keeps the state machine independent of PikPak's private HTTP API.

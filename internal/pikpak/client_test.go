@@ -214,3 +214,131 @@ func TestCaptchaChallengeIsVisible(t *testing.T) {
 		t.Fatalf("challenge hidden: %v", err)
 	}
 }
+
+func TestInvalidCaptchaTokenRefreshIsBounded(t *testing.T) {
+	for _, outcome := range []string{"accepted", "rejected", "challenge"} {
+		t.Run(outcome, func(t *testing.T) {
+			fileCalls, captchaCalls := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/drive/v1/files/file":
+					fileCalls++
+					if fileCalls == 1 || outcome == "rejected" {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`{"error":"captcha_invalid_token"}`))
+						return
+					}
+					if r.Header.Get("X-Captcha-Token") != "new-captcha" {
+						t.Error("refreshed captcha token not sent")
+					}
+					_, _ = w.Write([]byte(`{"id":"file"}`))
+				case "/v1/shield/captcha/init":
+					captchaCalls++
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+					}
+					if body["captcha_token"] != "" || body["action"] != "GET:/drive/v1/files/file" {
+						t.Error("invalid captcha was reused or wrong action was requested", body)
+					}
+					response := map[string]any{"captcha_token": "new-captcha", "expires_in": 300}
+					if outcome == "challenge" {
+						response["url"] = "https://mypikpak.com/verify/challenge"
+					}
+					_ = json.NewEncoder(w).Encode(response)
+				default:
+					t.Error("unexpected request", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			c := New(Credentials{AccessToken: "access", CaptchaToken: "old-captcha"})
+			c.UserURL, c.DriveURL = server.URL, server.URL
+			c.RequestInterval, c.WriteInterval = 0, 0
+			persisted := Credentials{}
+			c.Save = func(v Credentials) error { persisted = v; return nil }
+			_, err := c.Get(context.Background(), "file")
+			wantFileCalls := 2
+			if outcome == "challenge" {
+				wantFileCalls = 1
+			}
+			if captchaCalls != 1 || fileCalls != wantFileCalls || persisted.CaptchaToken != "new-captcha" {
+				t.Fatalf("captcha refresh not bounded/persisted: captcha=%d file=%d persisted=%q err=%v", captchaCalls, fileCalls, persisted.CaptchaToken, err)
+			}
+			if outcome == "accepted" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				wantCode := "captcha_invalid_token"
+				if outcome == "challenge" {
+					wantCode = "verification_required"
+				}
+				var up *APIError
+				if !errors.As(err, &up) || up.Code != wantCode {
+					t.Fatalf("expected %s, got %v", wantCode, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPrepareVerificationPreservesPendingAction(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		verified bool
+		expired  bool
+		want     string
+	}{
+		{"pending-write", false, false, "POST:/drive/v1/files"},
+		{"expired-access", false, true, "POST:/v1/auth/signin"},
+		{"previously-verified", true, false, "GET:/v1/user/me"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/shield/captcha/init" {
+					t.Error("unexpected endpoint", r.URL.Path)
+				}
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body["action"] != scenario.want {
+					t.Errorf("captcha action = %v, want %s", body["action"], scenario.want)
+				}
+				_, _ = w.Write([]byte(`{"captcha_token":"new-pending","expires_in":300,"url":"https://user.mypikpak.com/captcha"}`))
+			}))
+			defer server.Close()
+			expiry := time.Now().Add(time.Hour).Unix()
+			if scenario.expired {
+				expiry = time.Now().Add(-time.Hour).Unix()
+			}
+			c := New(Credentials{AccessToken: "access", Expiry: expiry, CaptchaToken: "pending", CaptchaAction: "POST:/drive/v1/files", CaptchaVerified: scenario.verified})
+			c.UserURL = server.URL
+			link, snapshot, err := c.PrepareVerification(context.Background())
+			if err != nil || link == "" || snapshot.CaptchaAction != scenario.want || snapshot.CaptchaVerified {
+				t.Fatal("pending challenge action was not retained", err)
+			}
+		})
+	}
+}
+
+func TestVerifiedSigninTokenDoesNotBypassRefreshRestriction(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/v1/auth/token" {
+			t.Error("terminal refresh restriction was bypassed", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"verification_required"}`))
+	}))
+	defer server.Close()
+	c := New(Credentials{Username: "user", Password: "password", RefreshToken: "refresh", CaptchaToken: "manually-verified", CaptchaAction: "POST:/v1/auth/signin", CaptchaVerified: true, CaptchaExpiry: time.Now().Add(time.Minute).Unix()})
+	c.UserURL = server.URL
+	_, err := c.Me(context.Background())
+	var up *APIError
+	if !errors.As(err, &up) || up.Code != "verification_required" || requests != 1 {
+		t.Fatal("refresh restriction was ignored", err, requests)
+	}
+}
