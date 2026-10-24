@@ -4,16 +4,13 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'motion/react'
 import { toast } from 'sonner'
-import { Film, AlertCircle, ArrowDownToLine, ArrowRight, ArrowUpRight, Check, CheckCircle2, ChevronDown, Clock3, Cloud, Download, ExternalLink, FileText, Folder, HardDrive, History, KeyRound, Link2, LoaderCircle, LockKeyhole, Pause, Play, Plus, RefreshCw, RotateCcw, Search, Server, Settings2, ShieldCheck, ShieldQuestion, Trash2, UsersRound, Wifi, X } from 'lucide-react'
+import { Film, AlertCircle, ArrowRight, ArrowUpRight, Check, CheckCircle2, ChevronDown, Clock3, Cloud, Download, ExternalLink, FileText, Folder, HardDrive, History, KeyRound, Link2, LoaderCircle, LockKeyhole, Plus, RefreshCw, RotateCcw, Server, Settings2, ShieldCheck, ShieldQuestion, Trash2, UsersRound, Wifi, X } from 'lucide-react'
 import { api, bytes, date, downloadBackup, stateLabels } from './api'
 import type { Account, FileNode, FilesResult, Job, Summary } from './api'
-import { BackupNote, Confirm, EmptyState, ErrorState, FileIcon, IconButton, Loading, Modal, Status } from './components'
+import { BackupNote, Confirm, EmptyState, ErrorState, FileIcon, Loading, Modal, Status } from './components'
 import { RecoveryDialog } from './dialogs'
-import { useJobRetry } from './useJobRetry'
 import { AccountVerifyButton, accountIssue, useAccounts } from './AccountHealth'
 import { AccountVerification } from './AccountVerification'
-import { JobLane } from './JobLane'
-import { TaskDetail } from './TaskDetail'
 export { TaskDetail } from './TaskDetail'
 
 function PageHeading({eyebrow,title,description,children}:{eyebrow:string;title:string;description:string;children?:React.ReactNode}){return <div className="page-heading"><div className="heading-copy"><div className="eyebrow">{eyebrow}</div><h1>{title}<span className="heading-dot"/></h1><p>{description}</p></div><div className="heading-actions">{children}</div></div>}
@@ -28,12 +25,7 @@ export function AccountsPage(){
   </div>
 }
 
-export function TasksPage(){
-  const retry=useJobRetry();const client=useQueryClient();const q=useQuery({queryKey:['jobs'],queryFn:()=>api<{jobs:Job[]}>('/jobs')});const [filter,setFilter]=useState('all');const [detail,setDetail]=useState<Job|null>(null);const [cancel,setCancel]=useState<Job|null>(null);const running=['queued','running','waiting','retry'];const failed=['failed','partial','attention'];const jobs=q.data?.jobs.filter(j=>filter==='all'||filter==='running'&&running.includes(j.state)||filter==='failed'&&failed.includes(j.state)||filter==='completed'&&j.state==='completed')||[];
-  async function control(job:Job,action:string){if(action==='retry'){await retry.retry(job.id);return}try{await api(`/jobs/${job.id}/${action}`,{});client.invalidateQueries({queryKey:['jobs']});client.invalidateQueries({queryKey:['summary']});toast.success(action==='pause'?'任务已暂停':action==='cancel'?'任务已取消':'任务已重新排队');setCancel(null)}catch(e){toast.error((e as Error).message)}}
-  return <div className="scroll-page"><PageHeading eyebrow="A LITTLE WORK IN THE CLOUD" title="传输任务" description="每一次保存和恢复，都有清晰的进度。"><button className="button secondary" onClick={()=>q.refetch()}><RefreshCw size={16} className={q.isFetching?'spin':''}/>刷新</button></PageHeading><div className="page-tabs">{Object.entries({all:'全部任务',running:'进行中',completed:'已完成',failed:'需要处理'}).map(([key,label])=><button className={filter===key?'active':''} key={key} onClick={()=>setFilter(key)}>{label}{key==='running'&&<span>{q.data?.jobs.filter(j=>running.includes(j.state)).length||0}</span>}</button>)}</div>{q.isLoading?<Loading/>:q.error?<ErrorState error={q.error}/>:!jobs.length?<EmptyState icon={ArrowDownToLine} title="这里暂时没有任务" description="添加资源或开始恢复后，可以在这里查看进度。"/>:<div className="task-list">{jobs.map(job=><article className={`task-card ${job.state}`} key={job.id}><div className={`task-icon ${job.kind}`}>{job.kind==='recover'?<ShieldCheck size={23}/>:job.kind==='scan'?<Search size={22}/>:job.kind==='verify'||job.kind==='root'?<Cloud size={23}/>:job.state==='completed'?<CheckCircle2 size={23}/>:<ArrowDownToLine size={23}/>}</div><div className="task-main"><div className="task-title-row"><button className="task-title" onClick={()=>setDetail(job)}>{job.title}</button><Status state={job.state}/></div><div className="task-progress"><motion.i initial={false} animate={{width:`${job.progress}%`}} transition={{duration:.5}}/></div><div className="task-meta"><JobLane job={job}/><span>{date(job.created)}<i/>{job.progress}%</span>{job.attempts>0&&<span>已重试 {job.attempts} 次</span>}{job.next_run>0&&['retry','waiting'].includes(job.state)&&<span>下次核对 {new Date(job.next_run*1000).toLocaleTimeString('zh-CN')}</span>}</div>{job.message&&<p className="task-message">{job.message}</p>}</div><div className="task-actions">{running.includes(job.state)?<IconButton label={`暂停 ${job.title}`} onClick={()=>control(job,'pause')}><Pause size={17}/></IconButton>:job.state!=='completed'&&job.state!=='cancelled'&&<IconButton label={`重试 ${job.title}`} disabled={!!retry.busyJob} onClick={()=>control(job,'retry')}>{retry.busyJob===job.id?<LoaderCircle size={17} className="spin"/>:<Play size={17}/>}</IconButton>}{job.state!=='completed'&&job.state!=='cancelled'&&<IconButton label={`取消 ${job.title}`} onClick={()=>setCancel(job)}><X size={17}/></IconButton>}<IconButton label={`查看 ${job.title} 的详情`} onClick={()=>setDetail(job)}><ArrowUpRight size={18}/></IconButton></div></article>)}</div>}<TaskDetail job={detail} onClose={()=>setDetail(null)}/><Confirm open={!!cancel} onClose={()=>setCancel(null)} title="取消这个任务？" label="取消任务" confirm={()=>cancel&&control(cancel,'cancel')}><p>本地来源与已经保存的文件会保留。云端已接受的传输可能仍会继续，请在需要时重新检查。</p></Confirm></div>
-}
-
+export { TasksPage } from './TasksPage'
 
 export function RecoveryPage(){
   const client=useQueryClient();const navigate=useNavigate();const [page,setPage]=useState(0);const [selected,setSelected]=useState<string[]>([]);const [recover,setRecover]=useState<string[]|null>(null);const [scanning,setScanning]=useState(false);const summary=useQuery({queryKey:['summary'],queryFn:()=>api<Summary>('/summary')});const q=useQuery({queryKey:['files','recovery',page],queryFn:()=>api<FilesResult>(`/files?view=missing&limit=100&page=${page}`)});

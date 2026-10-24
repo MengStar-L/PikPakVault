@@ -418,7 +418,8 @@ func (s *Store) Job(id string) (Job, error) {
 	return jobScan(s.DB.QueryRow(`SELECT `+jobCols+` FROM jobs WHERE id=?`, id))
 }
 func (s *Store) Jobs() ([]Job, error) {
-	rows, e := s.DB.Query(`SELECT ` + jobCols + ` FROM jobs ORDER BY created DESC LIMIT 500`)
+	rows, e := s.DB.Query(`SELECT ` + jobCols + ` FROM jobs
+		ORDER BY CASE WHEN state IN ('queued','running','waiting','retry') THEN 0 ELSE 1 END,created DESC,id DESC LIMIT 500`)
 	if e != nil {
 		return nil, e
 	}

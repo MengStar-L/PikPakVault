@@ -44,7 +44,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 从 [Releases](https://github.com/MengStar-L/PikPakVault/releases/latest) 下载对应架构安装包与 `SHA256SUMS`，也可以执行：
 
 ```bash
-version=0.3.12
+version=0.3.13
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -114,6 +114,8 @@ PotPlayer 直接连接 PikPak，不使用需要网页登录态的服务器中转
 
 如果任务显示失败或需要处理，点击“重试”会继续原任务并显示核对进度。云端已保存但响应丢失时，会重新检查原目标目录，不盲目重复转存。无法唯一匹配的结果可在任务详情中关联；旧版本落到其他目录的结果需先核对归属，再修正到原目标位置。
 
+在「传输任务」点击 **一键全部重新开始**，可一次继续当前账号所有失败、部分完成、需要处理及暂停的任务，包括列表尚未展示的旧任务。原任务 ID、下载缓存、上传会话和已完成进度均保留；已完成、已取消、正在执行及其他账号的任务不会重新执行。重复检查只安排一次，账号异常等暂不能继续的任务会说明跳过原因。加入队列并不代表故障已解决，后续进度和失败原因会继续显示在任务列表中。
+
 选择保存位置时，可以直接新建文件夹、重命名或移到回收站，无需退出添加窗口。顶部小字路径可切换目录；新建后自动进入，删除当前目录后返回上级。直接保存、RSS、TelDrive 和移动窗口使用同一套交互。
 
 ## RSS 自动收藏
@@ -150,7 +152,7 @@ PotPlayer 直接连接 PikPak，不使用需要网页登录态的服务器中转
 sudo journalctl -u pikpak-vault-update -n 60 --no-pager
 sudo cat /var/lib/pikpak-vault-updater/status.json
 # 将版本号替换为实际新版本
-sudo bash deploy/update.sh v0.3.12
+sudo bash deploy/update.sh v0.3.13
 ```
 
 更新源默认是本仓库的公开 Releases，可在 root 管理的环境配置中设置 `VAULT_UPDATE_REPOSITORY=owner/repository`。Windows 和 Docker 支持检查与下载链接；网页自动安装仅用于上述 systemd 安装方式。Docker 更新请重新构建镜像并保留数据卷。
@@ -198,7 +200,7 @@ go test ./...
 go run ./cmd/vault serve --data ./data --listen 127.0.0.1:5675
 
 # Linux 双架构发布包
-bash scripts/build.sh 0.3.12
+bash scripts/build.sh 0.3.13
 ```
 
 前端 React 19 + TypeScript + Vite + Tailwind / Radix / Motion，后端 Go `net/http` + SQLite。前端产物嵌入可执行文件。开发热更新使用 `npm run dev --prefix web`。Docker 可执行 `docker compose up -d --build`。

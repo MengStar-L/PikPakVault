@@ -183,6 +183,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	private.HandleFunc("POST /api/v1/imports", a.endpoint(a.importCreate))
 	private.HandleFunc("PUT /api/v1/sources/{id}", a.endpoint(a.sourceUpdate))
 	private.HandleFunc("GET /api/v1/jobs", a.endpoint(a.jobsList))
+	private.HandleFunc("POST /api/v1/jobs/retry-all", a.endpoint(a.jobsRetryAll))
 	private.HandleFunc("GET /api/v1/jobs/{id}", a.endpoint(a.jobDetail))
 	private.HandleFunc("POST /api/v1/jobs/{id}/{action}", a.endpoint(a.jobAction))
 	private.HandleFunc("POST /api/v1/scans", a.endpoint(a.scanCreate))
@@ -1147,7 +1148,11 @@ func (a *App) jobsList(w http.ResponseWriter, r *http.Request) error {
 	if e != nil {
 		return e
 	}
-	writeJSON(w, 200, map[string]any{"jobs": jobs})
+	summary := jobRetrySummary{AccountID: a.active()}
+	if e = a.Store.DB.QueryRow(`SELECT COUNT(*) FROM jobs WHERE account_id=? AND state IN `+retryableJobStates, summary.AccountID).Scan(&summary.Count); e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]any{"jobs": jobs, "retry_summary": summary})
 	return nil
 }
 func (a *App) jobDetail(w http.ResponseWriter, r *http.Request) error {
@@ -1181,14 +1186,12 @@ func (a *App) jobAction(w http.ResponseWriter, r *http.Request) error {
 		j.State = "cancelled"
 		j.Message = "Cancelled; saved sources and files are retained"
 	case "retry":
-		if j.State == "running" || a.executing[j.ID] {
-			return fail(409, "原任务仍在保存进度，请稍后再试")
-		}
-		if j.AccountID != a.active() && j.Kind != "verify" {
-			return fail(409, "Switch to this task's account first")
-		}
-		if !a.accountJobAllowed(j.AccountID, j.Kind) {
+		account, err := a.Store.Account(j.AccountID)
+		if err != nil {
 			return a.accountFailure(j.AccountID)
+		}
+		if _, err = a.retryJobGuard(j, a.active(), account); err != nil {
+			return err
 		}
 		if j.Kind == "verify" {
 			var other int
@@ -1214,17 +1217,7 @@ func (a *App) jobAction(w http.ResponseWriter, r *http.Request) error {
 				}
 			}
 		}
-		j.State = "queued"
-		j.Message = "已收到重试请求，等待继续原任务"
-		if j.Kind == "import" {
-			j.Message = "已收到重试请求，将重新核对云端保存结果"
-		}
-		j.Attempts = 0
-		j.NextRun = 0
-		d.Problems = map[string]string{}
-		for _, transfer := range d.Transfers {
-			transfer.Polls = 0
-		}
+		resetJobForRetry(&j, &d)
 	case "associate":
 		if j.AccountID != a.active() {
 			return fail(409, "请先切换到该任务所属账号")
