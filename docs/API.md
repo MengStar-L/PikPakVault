@@ -30,6 +30,7 @@ JSON 错误：`{"error":"可读原因"}`。PikPak 错误另提供 `code`、`endp
 | PUT `/sources/{id}` | `{link,pass_code?,selected?}`，更新来源，保留原逐文件清单 |
 | GET `/jobs` | 最多 500 条任务，优先显示排队和执行中的任务，再显示最近历史；另返回 `retry_summary:{account_id,count}`，count 为当前账号全部可请求重试状态的任务数，不受 500 条限制，实际排队数以批量接口响应为准 |
 | GET `/jobs/{id}` | 任务、逐文件问题、转存阶段及归属信息 |
+| 任务字段 `wait_reason` | `state=waiting` 且 `wait_reason=disk_space` 表示等待本地磁盘空间，`next_run` 为下次本地检查时间；不会将其计为失败或消耗网络重试次数 |
 | POST `/jobs/retry-all` | `{account_id}` 必须与当前活动账号一致；继续其所有 failed/partial/attention/paused 原任务，返回 restarted/skipped/skipped_reasons/message，保留缓存及上传会话；不受列表条数限制 |
 | POST `/jobs/{id}/{action}` | pause/cancel/retry/associate；associate 输入 `{source_id?,remote_ids:[]}` |
 | POST `/scans` | 创建完整检查任务 |

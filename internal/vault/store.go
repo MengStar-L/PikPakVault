@@ -388,19 +388,20 @@ func (s *Store) SaveSource(v Source) error {
 }
 
 type Job struct {
-	ID        string          `json:"id"`
-	AccountID string          `json:"account_id"`
-	Kind      string          `json:"kind"`
-	Lane      string          `json:"lane,omitempty"`
-	Title     string          `json:"title"`
-	State     string          `json:"state"`
-	Data      json.RawMessage `json:"-"`
-	Progress  int             `json:"progress"`
-	Message   string          `json:"message"`
-	Attempts  int             `json:"attempts"`
-	NextRun   int64           `json:"next_run"`
-	Created   int64           `json:"created"`
-	Updated   int64           `json:"updated"`
+	ID         string          `json:"id"`
+	AccountID  string          `json:"account_id"`
+	Kind       string          `json:"kind"`
+	Lane       string          `json:"lane,omitempty"`
+	Title      string          `json:"title"`
+	State      string          `json:"state"`
+	WaitReason string          `json:"wait_reason,omitempty"`
+	Data       json.RawMessage `json:"-"`
+	Progress   int             `json:"progress"`
+	Message    string          `json:"message"`
+	Attempts   int             `json:"attempts"`
+	NextRun    int64           `json:"next_run"`
+	Created    int64           `json:"created"`
+	Updated    int64           `json:"updated"`
 }
 
 const jobCols = `id,account_id,kind,title,state,data,progress,message,attempts,next_run,created,updated`
@@ -409,6 +410,7 @@ func jobScan(r scanner) (j Job, e error) {
 	var d string
 	e = r.Scan(&j.ID, &j.AccountID, &j.Kind, &j.Title, &j.State, &d, &j.Progress, &j.Message, &j.Attempts, &j.NextRun, &j.Created, &j.Updated)
 	j.Data = json.RawMessage(d)
+	j.setWaitReason()
 	if j.Kind == "recover" || j.Kind == "teldrive_upload" || j.Kind == "import" {
 		j.Lane = jobLane(j)
 	}
@@ -446,9 +448,22 @@ func (s *Store) SaveJob(j *Job, data any) error {
 	if data != nil {
 		j.Data = json.RawMessage(jsonText(data))
 	}
+	j.setWaitReason()
 	j.Updated = now()
 	_, e := s.DB.Exec(`UPDATE jobs SET state=?,data=?,progress=?,message=?,attempts=?,next_run=?,updated=? WHERE id=?`, j.State, string(j.Data), j.Progress, j.Message, j.Attempts, j.NextRun, j.Updated, j.ID)
 	return e
+}
+
+func (j *Job) setWaitReason() {
+	j.WaitReason = ""
+	if j.State == "waiting" {
+		var data struct {
+			WaitReason string `json:"wait_reason"`
+		}
+		if json.Unmarshal(j.Data, &data) == nil && data.WaitReason == "disk_space" {
+			j.WaitReason = data.WaitReason
+		}
+	}
 }
 func (s *Store) Descendants(ids []string, account string) ([]Node, error) {
 	all, e := s.AllNodes(account)

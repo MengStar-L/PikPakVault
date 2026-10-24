@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'motion/react'
 import { toast } from 'sonner'
 import { ArrowDownToLine, ArrowUpRight, CheckCircle2, Cloud, LoaderCircle, Pause, Play, RefreshCw, RotateCcw, Search, ShieldCheck, X } from 'lucide-react'
-import { api, date } from './api'
+import { api, date, jobDisplayState } from './api'
 import type { Job } from './api'
 import { Confirm, EmptyState, ErrorState, IconButton, Loading, Status } from './components'
 import { useJobRetry } from './useJobRetry'
@@ -110,9 +110,9 @@ export function TasksPage() {
     {q.isLoading ? <Loading/> : q.error ? <ErrorState error={q.error}/> : !jobs.length ? <EmptyState icon={ArrowDownToLine} title="这里暂时没有任务" description="添加资源或开始恢复后，可以在这里查看进度。"/> : <div className="task-list">{jobs.map(job => <article className={`task-card ${job.state}`} key={job.id}>
       <div className={`task-icon ${job.kind}`}>{job.kind === 'recover' ? <ShieldCheck size={23}/> : job.kind === 'scan' ? <Search size={22}/> : job.kind === 'verify' || job.kind === 'root' ? <Cloud size={23}/> : job.state === 'completed' ? <CheckCircle2 size={23}/> : <ArrowDownToLine size={23}/>}</div>
       <div className="task-main">
-        <div className="task-title-row"><button className="task-title" onClick={() => setDetail(job)}>{job.title}</button><Status state={job.state}/></div>
+        <div className="task-title-row"><button className="task-title" onClick={() => setDetail(job)}>{job.title}</button><Status state={jobDisplayState(job)}/></div>
         <div className="task-progress"><motion.i initial={false} animate={{ width: `${job.progress}%` }} transition={{ duration: .5 }}/></div>
-        <div className="task-meta"><JobLane job={job}/><span>{date(job.created)}<i/>{job.progress}%</span>{job.attempts > 0 && <span>已重试 {job.attempts} 次</span>}{job.next_run > 0 && ['retry', 'waiting'].includes(job.state) && <span>下次核对 {new Date(job.next_run * 1000).toLocaleTimeString('zh-CN')}</span>}</div>
+        <div className="task-meta"><JobLane job={job}/><span>{date(job.created)}<i/>{job.progress}%</span>{job.attempts > 0 && <span>已重试 {job.attempts} 次</span>}{job.next_run > 0 && ['retry', 'waiting'].includes(job.state) && <span>{job.wait_reason === 'disk_space' && job.state === 'waiting' ? '下次检查' : '下次核对'} {new Date(job.next_run * 1000).toLocaleTimeString('zh-CN')}</span>}</div>
         {job.message && <p className="task-message">{job.message}</p>}
       </div>
       <div className="task-actions">

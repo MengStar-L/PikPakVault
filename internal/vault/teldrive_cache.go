@@ -21,6 +21,64 @@ type cacheOwner struct {
 	NodeID string `json:"node_id"`
 }
 
+type diskSpaceWait struct {
+	NodeID string `json:"node_id"`
+	Size   int64  `json:"size"`
+}
+
+func markSpaceWait(d *JobData, nodeID string, size int64, err *aria2.InsufficientSpaceError) error {
+	d.WaitReason = "disk_space"
+	d.WaitSpace = &diskSpaceWait{NodeID: nodeID, Size: size}
+	return &pending{err.Error() + "；等待磁盘空间，释放后自动继续（每 60 秒检查）", 60}
+}
+
+// A persisted space wait can be checked using only the local disk. In-flight
+// upload intents still reach PikPak so an already-saved result can free cache.
+func (a *App) recheckDownloadSpace(j *Job, d *JobData) error {
+	waiting, reason := d.WaitSpace, d.WaitReason
+	d.WaitReason, d.WaitSpace = "", nil
+	if reason != "disk_space" || waiting == nil || (j.Kind != "teldrive_upload" && j.Kind != "recover") || d.RecoveryLane == cloudLane {
+		return nil
+	}
+	if j.AccountID != a.active() {
+		return errPaused
+	}
+	n, err := a.Store.Node(waiting.NodeID, j.AccountID)
+	if err != nil {
+		return err
+	}
+	active, err := localNodeActive(a.Store.DB, n.ID)
+	if err != nil {
+		return err
+	}
+	if !active || d.Done[n.ID] || n.Size != waiting.Size {
+		return nil
+	}
+	for id := range d.Uploads {
+		if a.telDriveResumeNode(*j, d, id) {
+			if active, err := localNodeActive(a.Store.DB, id); err == nil && active {
+				return nil
+			}
+		}
+	}
+	dir := a.telDriveCacheDir(j.ID, n.ID)
+	if _, err = os.Stat(dir); err == nil {
+		if err = aria2.Validate(dir); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err = aria2.CheckSpace(dir, waiting.Size); err != nil {
+		var low *aria2.InsufficientSpaceError
+		if errors.As(err, &low) {
+			return markSpaceWait(d, n.ID, waiting.Size, low)
+		}
+		return err
+	}
+	return nil
+}
+
 func (a *App) telDriveCacheDir(job, node string) string {
 	return filepath.Join(aria2.ProgramDir(), "downloads", a.Store.Get("instance"), stableNode(job, node))
 }
@@ -37,6 +95,13 @@ func (a *App) downloadTelDrive(ctx context.Context, j *Job, d *JobData, n Node, 
 	if e := update.Atomic(filepath.Join(dir, "owner.json"), body, 0600); e != nil {
 		return "", e
 	}
+	if e := aria2.CheckSpace(dir, f.Size); e != nil {
+		var low *aria2.InsufficientSpaceError
+		if errors.As(e, &low) {
+			return "", markSpaceWait(d, n.ID, f.Size, low)
+		}
+		return "", e
+	}
 	identity := stableNode(n.SourceID, jsonText(f))
 	j.Message = "正在准备专用 aria2，首次使用会自动下载并校验"
 	if e := a.checkpoint(j, d); e != nil {
@@ -49,7 +114,7 @@ func (a *App) downloadTelDrive(ctx context.Context, j *Job, d *JobData, n Node, 
 	if e = a.checkpoint(j, d); e != nil {
 		return "", e
 	}
-	return aria2.Fetch(ctx, dir, aria2.Source{Binary: bin, Identity: identity, Size: f.Size, Open: func(ctx context.Context, offset, length int64) (io.ReadCloser, error) {
+	file, e := aria2.Fetch(ctx, dir, aria2.Source{Binary: bin, Identity: identity, Size: f.Size, Open: func(ctx context.Context, offset, length int64) (io.ReadCloser, error) {
 		return c.OpenRange(ctx, f, offset, length)
 	}}, func(p aria2.Progress) error {
 		if e := ctx.Err(); e != nil {
@@ -62,6 +127,13 @@ func (a *App) downloadTelDrive(ctx context.Context, j *Job, d *JobData, n Node, 
 		j.Message = fmt.Sprintf("aria2 下载 · %s / %s · %s/s", humanBytes(p.Completed), humanBytes(p.Total), humanBytes(p.Speed))
 		return a.checkpoint(j, d)
 	})
+	if e != nil {
+		var low *aria2.InsufficientSpaceError
+		if errors.As(e, &low) {
+			return "", markSpaceWait(d, n.ID, f.Size, low)
+		}
+	}
+	return file, e
 }
 
 func humanBytes(v int64) string {

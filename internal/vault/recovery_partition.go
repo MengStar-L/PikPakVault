@@ -206,6 +206,7 @@ func recoveryLaneData(data JobData, lane string, ids []string, nodes, sources ma
 	// job ID too. Even an orphaned session must stay with that original job.
 	if lane == "cloud" {
 		data.Uploads = nil
+		data.WaitReason, data.WaitSpace = "", nil
 	}
 	if data.SourceID != "" && !sourceInLane(data.SourceID) {
 		data.SourceID = ""

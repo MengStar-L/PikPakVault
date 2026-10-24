@@ -1,6 +1,7 @@
 package aria2
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 
@@ -28,4 +29,12 @@ func freeSpace(path string) (uint64, error) {
 	var free uint64
 	e = windows.GetDiskFreeSpaceEx(p, &free, nil, nil)
 	return free, e
+}
+
+func allocatedBytes(info os.FileInfo) int64 {
+	if stat, ok := info.Sys().(*syscall.Win32FileAttributeData); ok &&
+		stat.FileAttributes&(windows.FILE_ATTRIBUTE_SPARSE_FILE|windows.FILE_ATTRIBUTE_COMPRESSED) == 0 {
+		return info.Size()
+	}
+	return 0 // Conservatively reserve the whole file for sparse/compressed data.
 }

@@ -228,13 +228,8 @@ func Fetch(ctx context.Context, dir string, source Source, progress ProgressFunc
 	if bin == "" {
 		return "", fmt.Errorf("专用 aria2 尚未准备完成")
 	}
-	available, e := freeSpace(dir)
-	if e != nil {
+	if e = CheckSpace(dir, source.Size); e != nil {
 		return "", e
-	}
-	needed := uint64(max(source.Size-existing, 0)) + (64 << 20)
-	if available < needed {
-		return "", fmt.Errorf("下载缓存空间不足：至少还需 %d MiB，可用 %d MiB；请清理缓存或扩容后重试", needed>>20, available>>20)
 	}
 	// aria2 talks only to a temporary loopback bridge. TelDrive credentials never
 	// appear in argv, aria2 config/session files, logs, or redirected requests.
@@ -368,8 +363,12 @@ func Fetch(ctx context.Context, dir string, source Source, progress ProgressFunc
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
-		case <-done:
+		case processErr := <-done:
 			stopped = true
+			var exit *exec.ExitError
+			if errors.As(processErr, &exit) && exit.ExitCode() == 9 {
+				return "", downloadError("9", "", dir, source.Size)
+			}
 			return "", fmt.Errorf("aria2 进程提前退出，缓存已保留；请检查 aria2 安装后重试")
 		case <-tick.C:
 			var results []status
@@ -409,7 +408,7 @@ func Fetch(ctx context.Context, dir string, source Source, progress ProgressFunc
 				mu.Lock()
 				reason := lastError
 				mu.Unlock()
-				return "", fmt.Errorf("aria2 下载失败（错误码 %s），缓存已保留，请重试原任务。%s", s.Code, reason)
+				return "", downloadError(s.Code, reason, dir, source.Size)
 			}
 			if s.Status == "complete" {
 				stopChild()

@@ -97,8 +97,8 @@ func (a *App) runnableJobs(busy map[string]bool) []Job {
 	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
 	rows, err := a.Store.DB.Query(`SELECT `+jobCols+` FROM jobs
-		WHERE state IN ('queued','waiting','retry') AND (next_run<=? OR
-			(kind='recover' AND COALESCE(json_extract(data,'$.recovery_lane'),'')=''))
+		WHERE state IN ('queued','waiting','retry') AND (next_run<=? OR kind='teldrive_upload' OR
+			(kind='recover' AND COALESCE(json_extract(data,'$.recovery_lane'),'') IN ('','teldrive')))
 		AND (kind='verify' OR (account_id=? AND EXISTS (SELECT 1 FROM accounts
 			WHERE accounts.id=jobs.account_id AND (status='ready' OR
 			(status='quota_exceeded' AND jobs.kind IN ('scan','trash','sync','cleanup'))))))
@@ -121,8 +121,13 @@ func (a *App) runnableJobs(busy map[string]bool) []Job {
 	if err != nil {
 		return nil
 	}
-	selected := make(map[string]bool)
-	var jobs []Job
+	// Include deferred TelDrive work in the snapshot. A completed download or
+	// submitted upload keeps its cache until verification, so starting another
+	// large download during its short retry delay can exhaust the disk and also
+	// hold the only upload worker when that verification becomes due.
+	prepared := make([]Job, 0, len(candidates))
+	resume := make(map[string]bool)
+	haveTelDriveResume := false
 	for _, j := range candidates {
 		if a.executing[j.ID] {
 			continue
@@ -138,11 +143,30 @@ func (a *App) runnableJobs(busy map[string]bool) []Job {
 		if j.State != "queued" && j.State != "waiting" && j.State != "retry" {
 			continue
 		}
+		prepared = append(prepared, j)
+		if jobLane(j) == telDriveLane {
+			var d JobData
+			if json.Unmarshal(j.Data, &d) == nil {
+				for id := range d.Uploads {
+					if a.telDriveResumeNode(j, &d, id) {
+						resume[j.ID], haveTelDriveResume = true, true
+						break
+					}
+				}
+			}
+		}
+	}
+	selected := make(map[string]bool)
+	var jobs []Job
+	for _, j := range prepared {
 		if j.NextRun > now() {
 			continue
 		}
 		lane := jobLane(j)
 		if busy[lane] || selected[lane] {
+			continue
+		}
+		if lane == telDriveLane && haveTelDriveResume && !resume[j.ID] {
 			continue
 		}
 		selected[lane] = true

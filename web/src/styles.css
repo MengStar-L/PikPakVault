@@ -212,3 +212,5 @@
 .played-badge svg{flex-shrink:0}
 .grid .file-status{max-width:calc(100% - 46px);flex-wrap:wrap;justify-content:flex-end}
 .list .file-info .played-badge{margin-top:3px;padding:1px 5px;font-size:9px}
+
+.status.waiting_space{color:#987026;background:#fcf4e6}

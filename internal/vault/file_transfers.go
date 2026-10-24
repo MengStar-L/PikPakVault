@@ -11,10 +11,11 @@ import (
 )
 
 type FileTransfer struct {
-	JobID    string `json:"job_id"`
-	State    string `json:"state"`
-	Progress int    `json:"progress"`
-	Message  string `json:"message"`
+	JobID      string `json:"job_id"`
+	State      string `json:"state"`
+	WaitReason string `json:"wait_reason,omitempty"`
+	Progress   int    `json:"progress"`
+	Message    string `json:"message"`
 }
 
 // Magnet/share pending items are projections, not nodes. TelDrive pre-registers
@@ -45,6 +46,9 @@ func fileTransfers(tx *sql.Tx, account, parent string, q url.Values) ([]Node, ma
 			d.ParentID = "root"
 		}
 		transfer := &FileTransfer{JobID: j.ID, State: j.State, Progress: min(max(j.Progress, 0), 99), Message: j.Message}
+		if j.State == "waiting" && d.WaitReason == "disk_space" {
+			transfer.WaitReason = d.WaitReason
+		}
 		bySource[d.SourceID] = transfer
 		entries := d.Preview
 		var saved []Entry

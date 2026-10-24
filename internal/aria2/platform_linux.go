@@ -27,3 +27,10 @@ func freeSpace(path string) (uint64, error) {
 	e := unix.Statfs(path, &s)
 	return s.Bavail * uint64(s.Bsize), e
 }
+
+func allocatedBytes(info os.FileInfo) int64 {
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		return stat.Blocks * 512
+	}
+	return 0 // Unknown allocation must never count sparse holes as saved bytes.
+}

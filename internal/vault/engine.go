@@ -177,6 +177,8 @@ type TransferState struct {
 	Started         int64           `json:"started"`
 }
 type JobData struct {
+	WaitReason     string                     `json:"wait_reason,omitempty"`
+	WaitSpace      *diskSpaceWait             `json:"wait_space,omitempty"`
 	RecoveryLane   string                     `json:"recovery_lane,omitempty"`
 	OperationID    string                     `json:"operation_id,omitempty"` // Original remote intent names after partitioning a legacy recovery.
 	RSSID          string                     `json:"rss_id,omitempty"`
@@ -307,6 +309,9 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 	var c pikpak.Provider
 	e = json.Unmarshal(j.Data, &d)
 	d.init()
+	if e == nil {
+		e = a.recheckDownloadSpace(j, &d)
+	}
 	if e == nil {
 		c, e = a.client(j.AccountID)
 		if e == nil {
@@ -1185,7 +1190,18 @@ func (a *App) recover(ctx context.Context, c pikpak.Provider, j *Job, d *JobData
 		return e
 	}
 	skipped := 0
-	sort.SliceStable(nodes, func(i, k int) bool { return nodes[i].Kind == "folder" && nodes[k].Kind != "folder" })
+	resumeFirst := map[string]bool{}
+	if jobLane(*j) == telDriveLane {
+		for _, n := range nodes {
+			resumeFirst[n.ID] = a.telDriveResumeNode(*j, d, n.ID)
+		}
+	}
+	sort.SliceStable(nodes, func(i, k int) bool {
+		if (nodes[i].Kind == "folder") != (nodes[k].Kind == "folder") {
+			return nodes[i].Kind == "folder"
+		}
+		return resumeFirst[nodes[i].ID] && !resumeFirst[nodes[k].ID]
+	})
 	for i, n := range nodes {
 		if n.Trashed || d.Done[n.ID] {
 			continue

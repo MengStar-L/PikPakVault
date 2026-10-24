@@ -45,6 +45,8 @@ func resetJobForRetry(j *Job, d *JobData) {
 	}
 	j.Attempts = 0
 	j.NextRun = 0
+	j.WaitReason = ""
+	d.WaitReason, d.WaitSpace = "", nil
 	d.Problems = map[string]string{}
 	for _, transfer := range d.Transfers {
 		if transfer != nil {

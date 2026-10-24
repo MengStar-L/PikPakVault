@@ -1,3 +1,4 @@
+import { jobDisplayState } from './api'
 import type { MediaData } from './api'
 import { canPlayExternally, usePotPlayer } from './usePotPlayer'
 import { usePlaybackHistory } from './usePlaybackHistory'
@@ -72,7 +73,7 @@ export function RecoveryDialog({ids,onClose}:{ids:string[]|null;onClose:()=>void
       {q.data.skipped_pending>0&&<section className="recovery-pending" aria-label="已有传输或恢复任务">
         <p className="muted" role="status">{q.data.skipped_pending} 项资源已有传输或恢复任务，仍由原任务处理。请查看进度或继续原任务，无需重复新建恢复。</p>
         {pending.map(job=><article className="recovery-pending-job" key={job.id}>
-          <div className="recovery-pending-heading"><strong>{job.title}</strong><Status state={job.state}/></div>
+          <div className="recovery-pending-heading"><strong>{job.title}</strong><Status state={jobDisplayState(job)}/></div>
           <div className="recovery-pending-meta"><JobLane job={job}/><span>{Math.round(job.progress)}%</span></div>
           {job.message&&<p>{job.message}</p>}
           <div className="recovery-pending-actions"><button type="button" className="text-button" onClick={()=>setDetail(job.id)} aria-label={`查看任务 ${job.title}`}>查看任务<ArrowRight size={14}/></button>

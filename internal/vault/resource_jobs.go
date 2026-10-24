@@ -49,7 +49,8 @@ type rowsQuerier interface {
 // version; otherwise the oldest recovery owns the resource. This also prevents
 // two legacy recovery jobs from waiting on each other.
 func nodeJobs(q rowsQuerier, account string) (map[string]nodeJob, error) {
-	rows, err := q.Query(resourceJobsCTE+`SELECT r.node_id,j.id,j.kind,j.state,j.progress,j.message,COALESCE(json_extract(j.data,'$.exact_nodes'),0)
+	rows, err := q.Query(resourceJobsCTE+`SELECT r.node_id,j.id,j.kind,j.state,j.progress,j.message,COALESCE(json_extract(j.data,'$.exact_nodes'),0),
+		CASE WHEN j.state='waiting' AND json_extract(j.data,'$.wait_reason')='disk_space' THEN 'disk_space' ELSE '' END
 		FROM resource_jobs r JOIN unfinished_jobs j ON j.id=r.job_id
 		ORDER BY CASE WHEN j.kind='recover' THEN 1 ELSE 0 END,j.created,
 		COALESCE(NULLIF(json_extract(j.data,'$.operation_id'),''),j.id),j.id`, account)
@@ -61,7 +62,7 @@ func nodeJobs(q rowsQuerier, account string) (map[string]nodeJob, error) {
 	for rows.Next() {
 		var id string
 		var j nodeJob
-		if err = rows.Scan(&id, &j.JobID, &j.Kind, &j.State, &j.Progress, &j.Message, &j.Exact); err != nil {
+		if err = rows.Scan(&id, &j.JobID, &j.Kind, &j.State, &j.Progress, &j.Message, &j.Exact, &j.WaitReason); err != nil {
 			return nil, err
 		}
 		j.Progress = min(max(j.Progress, 0), 99)
