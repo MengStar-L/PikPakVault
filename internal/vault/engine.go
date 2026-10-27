@@ -240,6 +240,23 @@ func (a *App) checkpoint(j *Job, d *JobData) error {
 	}
 	return a.Store.SaveJob(j, d)
 }
+
+// updateJobProgress publishes long-running read-only work without changing
+// the task state. The running predicate is important: a user may pause or
+// cancel a scan while a provider call is unwinding, and that late callback
+// must not make the task look active again.
+func (a *App) updateJobProgress(j *Job, progress int, message string) {
+	progress = min(max(progress, 0), 99)
+	updated := now()
+	result, err := a.Store.DB.Exec(`UPDATE jobs SET progress=?,message=?,updated=? WHERE id=? AND state='running'`, progress, message, updated, j.ID)
+	if err != nil {
+		return
+	}
+	if changed, err := result.RowsAffected(); err == nil && changed == 1 {
+		j.Progress = progress
+		j.Message = message
+	}
+}
 func (a *App) scheduleScan() {
 	minutes, _ := strconv.Atoi(a.Store.Get("scan_minutes"))
 	last, _ := strconv.ParseInt(a.Store.Get("last_auto_scan"), 10, 64)
@@ -328,6 +345,8 @@ func (a *App) Execute(ctx context.Context, j *Job) {
 				e = a.prepareRoot(ctx, c, j.AccountID)
 			case "scan":
 				e = a.scan(ctx, c, j)
+			case "adopt":
+				e = a.adoptCloud(ctx, c, j, &d)
 			case "cleanup":
 				e = a.cleanup(ctx, c, j, &d)
 			case "import":
@@ -769,6 +788,7 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 	if ac.RootID == "" {
 		return block("The account's library root is not prepared; verify the account first")
 	}
+	a.updateJobProgress(j, 2, "正在确认云端专用目录")
 	me, e := c.Me(ctx)
 	if e != nil {
 		a.unknown(j.AccountID, protected)
@@ -814,6 +834,9 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 					return e
 				}
 				remote[f.ID] = f
+				if len(remote)%20 == 0 {
+					a.updateJobProgress(j, min(28, 3+len(remote)/4), fmt.Sprintf("正在扫描云端文件（已发现 %d 项）", len(remote)))
+				}
 				p := parentPath + "/" + f.Name
 				byPath[p] = append(byPath[p], f)
 				if f.Folder() {
@@ -829,6 +852,7 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 			return e
 		}
 	}
+	a.updateJobProgress(j, 30, fmt.Sprintf("云端目录扫描完成，共 %d 项，开始匹配本地记录", len(remote)))
 	adopted, states, e := scanUnbound(nodes, byPath, ac.RootID)
 	if e != nil {
 		return e
@@ -847,6 +871,7 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 			return wait("扫描期间云端文件发生变化，正在重新核对全部文件")
 		}
 	}
+	a.updateJobProgress(j, 45, fmt.Sprintf("已匹配 %d 项，开始核对文件状态", len(adopted)))
 	for i, n := range nodes {
 		if n.Trashed || n.RemoteID == "" || protected[n.ID] {
 			continue
@@ -887,8 +912,10 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 			state = "drift"
 		}
 		states[n.ID] = state
-		j.Progress = (i + 1) * 100 / max(len(nodes), 1)
+		progress := 45 + (i+1)*50/max(len(nodes), 1)
+		a.updateJobProgress(j, min(progress, 95), fmt.Sprintf("正在核对文件（%d/%d）", i+1, len(nodes)))
 	}
+	a.updateJobProgress(j, 95, "核对完成，正在保存结果")
 	// No missing conclusions are committed until the entire relevant scan has succeeded.
 	a.gate.RLock()
 	defer a.gate.RUnlock()

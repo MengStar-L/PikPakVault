@@ -101,7 +101,7 @@ func (a *App) runnableJobs(busy map[string]bool) []Job {
 			(kind='recover' AND COALESCE(json_extract(data,'$.recovery_lane'),'') IN ('','teldrive')))
 		AND (kind='verify' OR (account_id=? AND EXISTS (SELECT 1 FROM accounts
 			WHERE accounts.id=jobs.account_id AND (status='ready' OR
-			(status='quota_exceeded' AND jobs.kind IN ('scan','trash','sync','cleanup'))))))
+				(status='quota_exceeded' AND jobs.kind IN ('scan','adopt','trash','sync','cleanup'))))))
 		ORDER BY CASE WHEN kind='verify' THEN 0 WHEN kind='root' THEN 1 WHEN kind='cleanup' THEN 3 ELSE 2 END,next_run,created,id`,
 		now(), a.active())
 	if err != nil {

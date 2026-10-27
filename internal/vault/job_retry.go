@@ -57,7 +57,7 @@ func resetJobForRetry(j *Job, d *JobData) {
 
 func retryCheckKey(j Job, d JobData) string {
 	switch j.Kind {
-	case "scan", "verify":
+	case "scan", "verify", "adopt":
 		return j.Kind
 	case "rss_scan":
 		return j.Kind + ":" + d.RSSID

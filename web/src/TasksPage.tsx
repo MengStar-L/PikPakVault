@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'motion/react'
 import { toast } from 'sonner'
-import { ArrowDownToLine, ArrowUpRight, CheckCircle2, Cloud, LoaderCircle, Pause, Play, RefreshCw, RotateCcw, Search, ShieldCheck, X } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpRight, CheckCircle2, Cloud, Folder, LoaderCircle, Pause, Play, RefreshCw, RotateCcw, Search, ShieldCheck, X } from 'lucide-react'
 import { api, date, jobDisplayState } from './api'
 import type { Job } from './api'
 import { Confirm, EmptyState, ErrorState, IconButton, Loading, Status } from './components'
@@ -108,7 +108,7 @@ export function TasksPage() {
     {visibleOutcome && <div className={`task-batch-result${visibleOutcome.error ? ' error' : ''}`} role={visibleOutcome.error ? 'alert' : 'status'}>{visibleOutcome.message}</div>}
     <div className="page-tabs">{Object.entries({ all: '全部任务', running: '进行中', completed: '已完成', failed: '需要处理' }).map(([key, label]) => <button className={filter === key ? 'active' : ''} key={key} onClick={() => setFilter(key)}>{label}{key === 'running' && <span>{q.data?.jobs.filter(j => running.includes(j.state)).length || 0}</span>}</button>)}</div>
     {q.isLoading ? <Loading/> : q.error ? <ErrorState error={q.error}/> : !jobs.length ? <EmptyState icon={ArrowDownToLine} title="这里暂时没有任务" description="添加资源或开始恢复后，可以在这里查看进度。"/> : <div className="task-list">{jobs.map(job => <article className={`task-card ${job.state}`} key={job.id}>
-      <div className={`task-icon ${job.kind}`}>{job.kind === 'recover' ? <ShieldCheck size={23}/> : job.kind === 'scan' ? <Search size={22}/> : job.kind === 'verify' || job.kind === 'root' ? <Cloud size={23}/> : job.state === 'completed' ? <CheckCircle2 size={23}/> : <ArrowDownToLine size={23}/>}</div>
+      <div className={`task-icon ${job.kind}`}>{job.kind === 'recover' ? <ShieldCheck size={23}/> : job.kind === 'scan' ? <Search size={22}/> : job.kind === 'adopt' ? <Folder size={22}/> : job.kind === 'verify' || job.kind === 'root' ? <Cloud size={23}/> : job.state === 'completed' ? <CheckCircle2 size={23}/> : <ArrowDownToLine size={23}/>}</div>
       <div className="task-main">
         <div className="task-title-row"><button className="task-title" onClick={() => setDetail(job)}>{job.title}</button><Status state={jobDisplayState(job)}/></div>
         <div className="task-progress"><motion.i initial={false} animate={{ width: `${job.progress}%` }} transition={{ duration: .5 }}/></div>

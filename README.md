@@ -35,7 +35,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 | 📦 完整迁移 | 导出 / 导入全部数据库与配套密钥，包括账号认证、分享提取码、收藏、播放记录、任务和日志 |
 | 🔄 程序更新 | 检查 GitHub 正式 Release，确认后校验、备份、安装与重启；失败自动回滚 |
 
-> **恢复来源不等于文件备份。** 本程序不长期备份文件内容；TelDrive 上传仅使用可清理的临时下载缓存。原分享失效、磁链不可下载且云端无可用副本时，资源仍可能无法恢复；本地保留路径与失败原因，支持补充新来源。仅管理从本程序存入的资源。
+> **恢复来源不等于文件备份。** 本程序不长期备份文件内容；TelDrive 上传仅使用可清理的临时下载缓存。原分享失效、磁链不可下载且云端无可用副本时，资源仍可能无法恢复；本地保留路径与失败原因，支持补充新来源。默认只管理从本程序存入的资源；也可以在恢复中心主动接管专用目录中已直接上传的 PikPak 文件。
 
 ## 快速部署
 
@@ -44,7 +44,7 @@ PikPak Vault 是一个独立登录的个人资源库。输入磁链或 PikPak �
 从 [Releases](https://github.com/MengStar-L/PikPakVault/releases/latest) 下载对应架构安装包与 `SHA256SUMS`，也可以执行：
 
 ```bash
-version=0.3.15
+version=0.3.16
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -154,7 +154,7 @@ TelDrive 下载上传会优先继续已有完整缓存和上传凭据的任务�
 sudo journalctl -u pikpak-vault-update -n 60 --no-pager
 sudo cat /var/lib/pikpak-vault-updater/status.json
 # 将版本号替换为实际新版本
-sudo bash deploy/update.sh v0.3.15
+sudo bash deploy/update.sh v0.3.16
 ```
 
 更新源默认是本仓库的公开 Releases，可在 root 管理的环境配置中设置 `VAULT_UPDATE_REPOSITORY=owner/repository`。Windows 和 Docker 支持检查与下载链接；网页自动安装仅用于上述 systemd 安装方式。Docker 更新请重新构建镜像并保留数据卷。
@@ -202,7 +202,7 @@ go test ./...
 go run ./cmd/vault serve --data ./data --listen 127.0.0.1:5675
 
 # Linux 双架构发布包
-bash scripts/build.sh 0.3.15
+bash scripts/build.sh 0.3.16
 ```
 
 前端 React 19 + TypeScript + Vite + Tailwind / Radix / Motion，后端 Go `net/http` + SQLite。前端产物嵌入可执行文件。开发热更新使用 `npm run dev --prefix web`。Docker 可执行 `docker compose up -d --build`。

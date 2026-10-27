@@ -72,7 +72,7 @@ func accountStatusAllows(status, kind string) bool {
 	if kind == "verify" || status == "ready" {
 		return true
 	}
-	return status == "quota_exceeded" && (kind == "scan" || kind == "trash" || kind == "sync" || kind == "cleanup")
+	return status == "quota_exceeded" && (kind == "scan" || kind == "adopt" || kind == "trash" || kind == "sync" || kind == "cleanup")
 }
 
 func (a *App) accountJobAllowed(id, kind string) bool {
@@ -123,7 +123,7 @@ func (a *App) setAccountFault(id, expectedSecret, status, message, verificationU
 	}
 	filter := ""
 	if status == "quota_exceeded" {
-		filter = " AND kind NOT IN ('scan','trash','sync','cleanup')"
+		filter = " AND kind NOT IN ('scan','adopt','trash','sync','cleanup')"
 	}
 	result, err := tx.Exec(`UPDATE jobs SET state='paused',message=?,updated=? WHERE account_id=? AND kind<>'verify' AND state IN ('queued','waiting','retry')`+filter,
 		message+" 原任务和已提交结果已保留，处理后可手动继续。", now(), id)

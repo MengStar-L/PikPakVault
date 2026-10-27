@@ -187,6 +187,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	private.HandleFunc("GET /api/v1/jobs/{id}", a.endpoint(a.jobDetail))
 	private.HandleFunc("POST /api/v1/jobs/{id}/{action}", a.endpoint(a.jobAction))
 	private.HandleFunc("POST /api/v1/scans", a.endpoint(a.scanCreate))
+	private.HandleFunc("POST /api/v1/cloud/adopt", a.endpoint(a.cloudAdoptCreate))
 	private.HandleFunc("POST /api/v1/recovery/preview", a.endpoint(a.recoveryPreview))
 	private.HandleFunc("POST /api/v1/recovery", a.endpoint(a.recoveryCreate))
 	private.HandleFunc("GET /api/v1/settings", a.endpoint(a.settingsGet))
@@ -266,7 +267,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	})
 }
 
-var Version = "0.3.15"
+var Version = "0.3.16"
 
 func (a *App) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1272,6 +1273,33 @@ func (a *App) scanCreate(w http.ResponseWriter, r *http.Request) error {
 	j, e := a.Store.NewJob(account, "scan", "检查资源可用性", JobData{})
 	if e != nil {
 		return e
+	}
+	a.notify()
+	writeJSON(w, 202, j)
+	return nil
+}
+
+func (a *App) cloudAdoptCreate(w http.ResponseWriter, r *http.Request) error {
+	if a.active() == "" {
+		return fail(409, "Connect an account first")
+	}
+	account := a.active()
+	if !a.accountJobAllowed(account, "adopt") {
+		return a.accountFailure(account)
+	}
+	if pending := a.Store.Get("root_scan_pending:" + account); pending != "" {
+		return fail(409, "请先完成当前账号的全量核对，再接管云端文件")
+	}
+	var count int
+	if err := a.Store.DB.QueryRow(`SELECT COUNT(*) FROM jobs WHERE account_id=? AND kind='adopt' AND state IN ('queued','running','waiting','retry')`, account).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return fail(409, "接管任务已在进行中，请稍候")
+	}
+	j, err := a.Store.NewJob(account, "adopt", "接管 PikPak 云端文件", JobData{})
+	if err != nil {
+		return err
 	}
 	a.notify()
 	writeJSON(w, 202, j)
