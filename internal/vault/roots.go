@@ -45,6 +45,14 @@ func (a *App) scheduleRoot() {
 	if a.Store.Get("root_path:"+account) == desired {
 		return
 	}
+	// Resume only the old refusal to adopt an existing root. Other failures and
+	// deliberately paused/cancelled jobs still require an explicit retry.
+	if ac.RootID == "" {
+		_, _ = a.Store.DB.Exec(`UPDATE jobs SET state='queued',message='正在接纳已有目录并核对全部文件',attempts=0,next_run=0
+			WHERE account_id=? AND kind='root' AND state='attention'
+			AND json_extract(data,'$.root_path')=? AND message=?`, account, desired,
+			"目标位置已有同名项目，未合并或覆盖。请更换专用目录路径："+desired)
+	}
 	var count int
 	if err = a.Store.DB.QueryRow(`SELECT COUNT(*) FROM jobs WHERE account_id=? AND kind='root' AND json_extract(data,'$.root_path')=?`, account, desired).Scan(&count); err != nil || count > 0 {
 		return
@@ -63,14 +71,17 @@ func (a *App) ensureRoot(ctx context.Context, c pikpak.Provider, account string)
 		return cache.root, nil
 	}
 	id, err := a.resolveRoot(ctx, c, account, true)
+	if err == nil && a.Store.Get("root_scan_pending:"+account) != "" {
+		return "", wait("正在核对已转移目录中的全部文件，请在传输任务中查看扫描进度")
+	}
 	if err == nil && cache != nil {
 		cache.root, cache.rootPath = id, a.rootPath()
 	}
 	return id, err
 }
 
-// Reuse only parent folders. The terminal folder must be the already bound root
-// or an attributable creation marker; another folder is never silently adopted.
+// Reuse unique parent folders. A new account may also adopt a unique terminal
+// folder; moving an already bound root still cannot merge occupied directories.
 func (a *App) rootParent(ctx context.Context, c pikpak.Provider, parts []string, bound string) (string, error) {
 	parent := ""
 	for _, name := range parts {
@@ -151,10 +162,21 @@ func (a *App) resolveRoot(ctx context.Context, c pikpak.Provider, account string
 	if err != nil {
 		return "", err
 	}
+	var matches []pikpak.File
 	for _, f := range files {
-		if f.Name == name && f.ID != root.ID {
+		if f.Name == name {
+			matches = append(matches, f)
+		}
+	}
+	adopted := false
+	if len(matches) > 1 || len(matches) == 1 && (!matches[0].Folder() || matches[0].Trashed || matches[0].ParentID != parent) {
+		return "", block("专用目录路径存在重名或非文件夹项目，请核对：" + desired)
+	}
+	if len(matches) == 1 && matches[0].ID != root.ID {
+		if ac.RootID != "" {
 			return "", block("目标位置已有同名项目，未合并或覆盖。请更换专用目录路径：" + desired)
 		}
+		root, adopted = matches[0], true
 	}
 	if root.ID == "" {
 		marker := ".vault-root-" + a.Store.Get("instance")
@@ -219,6 +241,17 @@ func (a *App) resolveRoot(ctx context.Context, c pikpak.Provider, account string
 		return "", err
 	}
 	defer tx.Rollback()
+	if adopted {
+		if _, err = tx.Exec(`UPDATE accounts SET root_id=? WHERE id=? AND root_id=''`, root.ID, account); err != nil {
+			return "", err
+		}
+		if _, err = tx.Exec(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "root_scan_pending:"+account, root.ID); err != nil {
+			return "", err
+		}
+		if _, err = enqueueTx(tx, account, "scan", "核对已转移的全部文件", JobData{}); err != nil {
+			return "", err
+		}
+	}
 	for key, value := range map[string]string{"root_path:" + account: desired, "root_parent:" + account: parent} {
 		if _, err = tx.Exec(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
 			return "", err

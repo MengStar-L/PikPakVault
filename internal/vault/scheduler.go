@@ -132,6 +132,9 @@ func (a *App) runnableJobs(busy map[string]bool) []Job {
 		if a.executing[j.ID] {
 			continue
 		}
+		if j.Kind != "verify" && j.Kind != "root" && j.Kind != "scan" && a.Store.Get("root_scan_pending:"+j.AccountID) != "" {
+			continue
+		}
 		if j.Kind == "recover" {
 			if err := a.partitionRecovery(&j); err != nil {
 				j.State, j.Message = "attention", "恢复任务分流未完成，原进度已保留，请重试"

@@ -789,10 +789,15 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 	}
 	rootMissing := pikpak.Missing(e) || (e == nil && root.Trashed)
 	remote := map[string]pikpak.File{}
+	byPath := map[string][]pikpak.File{}
+	adopting := a.Store.Get("root_scan_pending:"+j.AccountID) == ac.RootID
 	if !rootMissing {
-		var walk func(string) error
+		if !root.Folder() {
+			return block("专用目录不是文件夹，未修改文件映射")
+		}
+		var walk func(string, string) error
 		seen := map[string]bool{}
-		walk = func(id string) error {
+		walk = func(id, parentPath string) error {
 			if seen[id] {
 				return block("Remote directory cycle")
 			}
@@ -802,21 +807,46 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 				return e
 			}
 			for _, f := range files {
+				if _, exists := remote[f.ID]; exists || f.ID == ac.RootID || f.ParentID != id || f.Trashed {
+					return block("云端目录树不一致，未修改文件映射")
+				}
+				if e = ValidName(f.Name); e != nil {
+					return e
+				}
 				remote[f.ID] = f
+				p := parentPath + "/" + f.Name
+				byPath[p] = append(byPath[p], f)
 				if f.Folder() {
-					if e = walk(f.ID); e != nil {
+					if e = walk(f.ID, p); e != nil {
 						return e
 					}
 				}
 			}
 			return nil
 		}
-		if e = walk(ac.RootID); e != nil {
+		if e = walk(ac.RootID, ""); e != nil {
 			a.unknown(j.AccountID, protected)
 			return e
 		}
 	}
-	states := map[string]string{}
+	adopted, states, e := scanUnbound(nodes, byPath, ac.RootID)
+	if e != nil {
+		return e
+	}
+	for _, f := range adopted {
+		if e = ctx.Err(); e != nil {
+			return e
+		}
+		check, err := c.Get(ctx, f.ID)
+		if err != nil {
+			a.unknown(j.AccountID, protected)
+			return err
+		}
+		if check.Trashed || !check.Complete() || check.Name != f.Name || check.ParentID != f.ParentID ||
+			check.Kind != f.Kind || check.Size != f.Size || !strings.EqualFold(check.Hash, f.Hash) {
+			return wait("扫描期间云端文件发生变化，正在重新核对全部文件")
+		}
+	}
 	for i, n := range nodes {
 		if n.Trashed || n.RemoteID == "" || protected[n.ID] {
 			continue
@@ -860,22 +890,56 @@ func (a *App) checkLibrary(ctx context.Context, c pikpak.Provider, j *Job) error
 		j.Progress = (i + 1) * 100 / max(len(nodes), 1)
 	}
 	// No missing conclusions are committed until the entire relevant scan has succeeded.
+	a.gate.RLock()
+	defer a.gate.RUnlock()
+	if a.active() != j.AccountID {
+		return errPaused
+	}
 	tx, e := a.Store.DB.Begin()
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback()
+	// Path matches include ancestor names. Any concurrent local edit invalidates
+	// the proposed new bindings, including a rename of an ancestor alone.
+	if len(adopted) > 0 || adopting {
+		for _, n := range nodes {
+			var revision int64
+			if e = tx.QueryRow(`SELECT revision FROM nodes WHERE id=?`, n.ID).Scan(&revision); e != nil {
+				return e
+			}
+			if revision != n.Revision {
+				return wait("扫描期间本地目录发生变化，正在重新核对全部文件")
+			}
+		}
+	}
 	currentProtected, e := scanProtectedNodes(tx, j.AccountID)
 	if e != nil {
 		return e
 	}
 	for _, n := range nodes {
 		state, ok := states[n.ID]
-		if !ok || protected[n.ID] || currentProtected[n.ID] {
+		if !ok || (protected[n.ID] || currentProtected[n.ID]) && !(adopting && n.RemoteID == "") {
+			continue
+		}
+		if n.RemoteID == "" {
+			f := adopted[n.ID]
+			if _, e = tx.Exec(`INSERT INTO bindings(account_id,node_id,remote_id,state,remote_name,remote_parent,thumbnail,checked)
+				SELECT ?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM nodes WHERE id=? AND revision=?)
+				ON CONFLICT(account_id,node_id) DO UPDATE SET remote_id=excluded.remote_id,state=excluded.state,
+				remote_name=excluded.remote_name,remote_parent=excluded.remote_parent,thumbnail=excluded.thumbnail,checked=excluded.checked
+				WHERE bindings.remote_id=''`, j.AccountID, n.ID, f.ID, state, f.Name, f.ParentID, f.Thumbnail, now(), n.ID, n.Revision); e != nil {
+				return e
+			}
 			continue
 		}
 		if _, e = tx.Exec(`UPDATE bindings SET state=?,checked=? WHERE account_id=? AND node_id=? AND remote_id=?
 			AND EXISTS (SELECT 1 FROM nodes WHERE id=? AND revision=?)`, state, now(), j.AccountID, n.ID, n.RemoteID, n.ID, n.Revision); e != nil {
+			return e
+		}
+	}
+	if adopting {
+		if _, e = tx.Exec(`DELETE FROM settings WHERE key=? AND value=?`, "root_scan_pending:"+j.AccountID, ac.RootID); e != nil {
 			return e
 		}
 	}
